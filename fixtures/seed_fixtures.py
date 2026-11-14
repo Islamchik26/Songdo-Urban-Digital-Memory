@@ -11,7 +11,8 @@ What is real and what is generated
   real       core.source_registry (source_registry.csv), mobility.stops
              (fixtures/songdo_stops.csv, the Songdo subset of the official file)
   curated    core.places (hand-typed landmark coordinates, approximate)
-  synthetic  routes, route patterns, vehicles, trips, stop events, GPS telemetry
+  synthetic  routes, route patterns, vehicles, trips, stop events, GPS telemetry;
+             building interiors, devices, telemetry, maintenance (fixtures/building_section.py)
 """
 from __future__ import annotations
 
@@ -19,15 +20,16 @@ import csv
 import math
 import random
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from fixtures.building_section import building_section  # noqa: E402
+from fixtures.common import BBOX, SERVICE_DAY, insert, point  # noqa: E402
 OUT = ROOT / "fixtures" / "seed_data.sql"
 SEED = 20261002
-KST = timezone(timedelta(hours=9))
-SERVICE_DAY = datetime(2026, 10, 2, tzinfo=KST)
-BBOX = (126.600, 37.350, 126.685, 37.425)
 
 # Curated Songdo landmarks. Coordinates are approximate centroids typed by hand
 # (source SRC_CORE_01) — replace with geocoded official values when verified.
@@ -69,39 +71,7 @@ LAYOVER = timedelta(minutes=12)
 MAX_LATENESS_S = 540
 
 
-# --------------------------------------------------------------------------- helpers
-def q(value: object) -> str:
-    """SQL literal."""
-    if value is None or value == "":
-        return "NULL"
-    if isinstance(value, bool):
-        return "TRUE" if value else "FALSE"
-    if isinstance(value, (int, float)):
-        return repr(value)
-    if isinstance(value, datetime):
-        return "'" + value.isoformat(timespec="seconds") + "'"
-    return "'" + str(value).replace("'", "''") + "'"
-
-
-def point(lon: float, lat: float) -> str:
-    return f"ST_SetSRID(ST_MakePoint({lon:.6f}, {lat:.6f}), 4326)"
-
-
-class Raw(str):
-    """SQL expression that must not be quoted."""
-
-
-def insert(table: str, columns: list[str], rows: list[list[object]], conflict: str = "DO NOTHING",
-           chunk: int = 500) -> list[str]:
-    out = []
-    head = f"INSERT INTO {table} ({', '.join(columns)}) VALUES"
-    for i in range(0, len(rows), chunk):
-        values = ",\n".join("  (" + ", ".join(v if isinstance(v, Raw) else q(v) for v in row) + ")"
-                            for row in rows[i:i + chunk])
-        out.append(f"{head}\n{values}\nON CONFLICT {conflict};")
-    return out
-
-
+# --------------------------------------------------------------------------- geometry helpers
 def to_xy(lon: float, lat: float) -> tuple[float, float]:
     """Local metres (equirectangular around Songdo) — fine for corridor geometry."""
     return (lon - 126.64) * 111_320 * math.cos(math.radians(37.39)), (lat - 37.39) * 110_540
@@ -133,7 +103,7 @@ def core_section() -> list[str]:
     lines += ["", "-- ---- core.places (curated landmarks) ----"]
     lines += insert(
         "core.places", ["place_id", "name_ko", "name_en", "category", "road_address", "geom", "provenance"],
-        [[pid, ko, en, cat, addr, Raw(point(lon, lat)), "SRC_CORE_01"] for pid, ko, en, cat, addr, lon, lat in PLACES],
+        [[pid, ko, en, cat, addr, point(lon, lat), "SRC_CORE_01"] for pid, ko, en, cat, addr, lon, lat in PLACES],
         "(place_id) DO UPDATE SET name_ko = EXCLUDED.name_ko, name_en = EXCLUDED.name_en, "
         "category = EXCLUDED.category, road_address = EXCLUDED.road_address, geom = EXCLUDED.geom")
     return lines
@@ -181,7 +151,7 @@ def mobility_section(rng: random.Random, n: int) -> list[str]:
     lines += insert(
         "mobility.stops",
         ["stop_id", "stop_number", "stop_name_ko", "geom", "managing_bis", "collected_on", "source_id"],
-        [[s["stop_id"], s["stop_number"], s["stop_name_ko"], Raw(point(*s["xy"])), s["managing_bis"],
+        [[s["stop_id"], s["stop_number"], s["stop_name_ko"], point(*s["xy"]), s["managing_bis"],
           s["collected_on"], "SRC_MOB_03"] for s in stops],
         "(stop_id) DO UPDATE SET stop_number = EXCLUDED.stop_number, stop_name_ko = EXCLUDED.stop_name_ko, "
         "geom = EXCLUDED.geom, managing_bis = EXCLUDED.managing_bis, collected_on = EXCLUDED.collected_on")
@@ -270,7 +240,7 @@ def mobility_section(rng: random.Random, n: int) -> list[str]:
             if vtype != "BUS":
                 battery[vid] = max(20.0, battery.get(vid, 96.0) - (0.004 * interval if moving else 0.001 * interval))
                 soc = round(battery[vid], 2)
-            obs_rows.append([vid, trip_id, Raw(point(lon, lat)), round(speed, 1), heading, soc, t,
+            obs_rows.append([vid, trip_id, point(lon, lat), round(speed, 1), heading, soc, t,
                              t + timedelta(seconds=rng.randint(1, 3)), "SRC_MOB_SYN"])
             t += timedelta(seconds=interval)
 
@@ -308,7 +278,8 @@ def main() -> None:
     ]
     lines += core_section()
     lines += mobility_section(rng, n)
-    # Next domain sections (building, tourism, environment, safety) are appended here.
+    lines += building_section(rng, n, PLACE_XY)
+    # Next domain sections (tourism, environment, safety) are appended here.
 
     OUT.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
     print(f"Wrote {OUT.relative_to(ROOT)} ({OUT.stat().st_size / 1024:.0f} kB, N={n})")

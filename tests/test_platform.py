@@ -16,6 +16,7 @@ import psycopg  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from adapters.base_adapter import calculate_payload_hash, validate_coordinate  # noqa: E402
+from adapters.building_adapter import BuildingTelemetryAdapter  # noqa: E402
 from adapters.core_adapter import PlacesAdapter  # noqa: E402
 from adapters.mobility_adapter import StopsAdapter, VehicleObservationAdapter  # noqa: E402
 from api.config import settings  # noqa: E402
@@ -151,6 +152,36 @@ class ApiValidationTests(unittest.TestCase):
         self.assertEqual(geo["type"], "FeatureCollection")
         self.assertGreater(len(geo["features"]), 100)
 
+    @needs_db
+    def test_building_state_and_silent_devices(self):
+        t = "2026-10-02T10:00:00+09:00"
+        state = self.client.get("/api/v1/building/buildings/BLD_G_TOWER/state", params={"as_of": t})
+        self.assertEqual(state.status_code, 200)
+        summary = state.json()["summary"]
+        self.assertTrue(18 < summary["avg_indoor_temperature_c"] < 28)
+        self.assertEqual(summary["open_maintenance_actions"], 1)
+        self.assertEqual(self.client.get("/api/v1/building/buildings/NOPE/state").status_code, 404)
+
+        silent = self.client.get("/api/v1/building/devices/silent", params={"as_of": t}).json()
+        self.assertEqual({d["device_id"] for d in silent},
+                         {"DEV-GT-TMP-06", "DEV-PT-CO2-01", "DEV-TB-PWR-01", "DEV-TS-TMP-03"})
+        # at 08:00 only the device that never reported is silent
+        early = self.client.get("/api/v1/building/devices/silent",
+                                params={"as_of": "2026-10-02T08:00:00+09:00"}).json()
+        self.assertEqual([d["device_id"] for d in early], ["DEV-TS-TMP-03"])
+
+    def test_building_write_endpoints_validate_input(self):
+        headers = {"X-API-Token": settings.ingest_api_token}
+        reading = {"device_id": "DEV-GT-TMP-01", "metric": "TEMPERATURE_C", "value": 22.0,
+                   "observed_at": "2026-10-02T10:32:00+09:00"}
+        self.assertEqual(self.client.post("/api/v1/building/telemetry", json=reading).status_code, 401)
+        for bad in ({**reading, "value": "-"}, {**reading, "observed_at": "yesterday"}):
+            r = self.client.post("/api/v1/building/telemetry", json=bad, headers=headers)
+            self.assertEqual(r.status_code, 422, bad)
+        r = self.client.post("/api/v1/building/devices/DEV-GT-TMP-01/relocate", json={"space_id": "X"},
+                             headers=headers)
+        self.assertEqual(r.status_code, 422)
+
 
 @needs_db
 class DatabaseTests(unittest.TestCase):
@@ -280,6 +311,68 @@ class MobilityDatabaseTests(unittest.TestCase):
                WHERE ST_DWithin(s.geom::geography,
                      ST_SetSRID(ST_MakePoint(126.6445, 37.3885), 4326)::geography, 400)"""))
         self.assertIn("idx_stops_geog", plan)
+
+
+@needs_db
+class BuildingDatabaseTests(unittest.TestCase):
+    def setUp(self):
+        self.conn = psycopg.connect(settings.conninfo())
+        self.conn.execute("SELECT 1")  # open the transaction; everything below is rolled back
+
+    def tearDown(self):
+        self.conn.rollback()
+        self.conn.close()
+
+    def test_relocation_closes_old_assignment_and_opens_new(self):
+        at = "2026-10-02T11:00:00+09:00"
+        self.conn.execute("SELECT building.relocate_device('DEV-GT-TMP-01', 'SP-GT-F12-R2', %s, 'TEST')", (at,))
+        rows = self.conn.execute(
+            """SELECT space_id, unassigned_at IS NULL FROM building.device_space_assignments
+               WHERE device_id = 'DEV-GT-TMP-01' ORDER BY assigned_at""").fetchall()
+        self.assertEqual(rows, [("SP-GT-F01-R1", False), ("SP-GT-F12-R2", True)])
+        audit = self.conn.execute(
+            """SELECT payload_snapshot->>'from_space', payload_snapshot->>'to_space' FROM core.event_audit_log
+               WHERE table_name = 'device_space_assignments' AND entity_id = 'DEV-GT-TMP-01'""").fetchall()
+        self.assertEqual(audit, [("SP-GT-F01-R1", "SP-GT-F12-R2")])
+        # moving back in time, or to the space it is already in, is rejected
+        for space, when in (("SP-GT-F03-R1", "2026-10-02T10:59:00+09:00"), ("SP-GT-F12-R2", "2026-10-02T12:00:00+09:00")):
+            with self.assertRaises(psycopg.errors.CheckViolation):
+                with self.conn.transaction():
+                    self.conn.execute("SELECT building.relocate_device('DEV-GT-TMP-01', %s, %s)", (space, when))
+
+    def test_device_cannot_be_in_two_spaces_at_once(self):
+        with self.assertRaises(psycopg.errors.ExclusionViolation):
+            with self.conn.transaction():
+                self.conn.execute(
+                    """INSERT INTO building.device_space_assignments (device_id, space_id, assigned_at)
+                       VALUES ('DEV-GT-TMP-01', 'SP-GT-F12-R2', '2026-10-01T00:00:00+09:00')""")
+
+    def test_room_cannot_have_parent_in_another_building(self):
+        with self.assertRaises(psycopg.errors.ForeignKeyViolation):
+            with self.conn.transaction():
+                self.conn.execute(
+                    """INSERT INTO building.spaces (space_id, building_id, parent_space_id, space_type,
+                                                    space_name, floor_number)
+                       VALUES ('SP-TEST', 'BLD_G_TOWER', 'SP-PT-F10', 'ROOM', 'wrong parent', 10)""")
+
+    def test_telemetry_adapter_fault_and_range_handling(self):
+        good = {"device_id": "DEV-GT-TMP-01", "metric": "TEMPERATURE_C", "value": 22.5,
+                "observed_at": "2026-10-03T09:00:00+09:00"}
+        rows = [good,
+                {**good, "value": "-", "observed_at": "2026-10-03T09:02:00+09:00"},          # sensor fault marker
+                {**good, "value": 480.0, "observed_at": "2026-10-03T09:04:00+09:00"},        # impossible value
+                {**good, "device_id": "DEV-NOPE", "observed_at": "2026-10-03T09:06:00+09:00"},
+                good]
+        summary = BuildingTelemetryAdapter(self.conn, actor="TEST").ingest(rows)
+        self.assertEqual((summary.loaded, summary.quarantined, summary.duplicates), (2, 2, 1))
+        reasons = sorted(r[0] for r in self.conn.execute(
+            "SELECT reason_code FROM core.quarantine_records WHERE batch_id = %s", (summary.batch_id,)))
+        self.assertEqual(reasons, ["FAULT_READING", "FK_VIOLATION"])
+        flags = self.conn.execute(
+            """SELECT value::float8, quality_flag FROM building.telemetry
+               WHERE device_id = 'DEV-GT-TMP-01' AND observed_at >= '2026-10-03T00:00:00+09:00'
+               ORDER BY observed_at""").fetchall()
+        self.assertEqual(flags, [(22.5, "GOOD"), (480.0, "SUSPECT")])
 
 
 if __name__ == "__main__":

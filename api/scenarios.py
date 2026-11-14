@@ -79,6 +79,8 @@ RADIUS = Param("radius_m", "Radius (m)", "float", 1000, 1, 20000)
 LIMIT = Param("limit", "Max rows", "int", 50, 1, 500)
 ROUTE = Param("route_number", "Route number (8, SD-A, AV-1)", "str", "8")
 DIRECTION = Param("direction", "Direction (0 or 1)", "int", 0, 0, 1)
+BUILDING = Param("building_id", "Building ID (e.g. BLD_G_TOWER, BLD_POSCO_TOWER)", "str", "BLD_G_TOWER")
+AS_OF_BLD = Param("as_of", "As of time (ISO, with offset)", "datetime", "2026-10-02T10:00:00+09:00")
 
 _SCENARIOS: list[Scenario] = [
     # ------------------------------------------------------------------ core
@@ -248,16 +250,133 @@ _SCENARIOS: list[Scenario] = [
          Param("last_n", "Latest GPS points", "int", 5, 1, 100)),
     ),
     # -------------------------------------------------------------- building
-    Scenario("DB2-1", "building", "Building & address reconciliation",
-             "Links building registry rows to canonical PostGIS centroids."),
-    Scenario("DB2-2", "building", "Space hierarchy & device registration",
-             "Floors, plant rooms and the IoT devices installed in them."),
-    Scenario("DB2-3", "building", "Device relocation history",
-             "Closes the old assignment with unassigned_at and opens the new one."),
-    Scenario("DB2-4", "building", "Missing heartbeat & fault detection",
-             "Anti-join: devices with no telemetry in the last 15 minutes."),
-    Scenario("DB2-5", "building", "VIP facility state retrieval",
-             "Live indoor temperature, power use and maintenance history."),
+    Scenario(
+        "DB2-1", "building", "Building & address reconciliation",
+        "Compares each registry building with its linked place and the nearest canonical place.",
+        "ready",
+        """
+        SELECT b.building_id, b.building_name_ko, b.road_address AS registry_address,
+               b.place_id AS linked_place, n.place_id AS nearest_place, n.distance_m,
+               (b.road_address IS NOT DISTINCT FROM n.road_address) AS address_matches,
+               CASE WHEN b.place_id IS NULL THEN 'UNLINKED'
+                    WHEN b.place_id = n.place_id AND n.distance_m <= %(max_distance_m)s
+                         AND b.road_address IS NOT DISTINCT FROM n.road_address THEN 'CONFIRMED'
+                    ELSE 'REVIEW' END AS reconciliation_status
+        FROM building.buildings b
+        LEFT JOIN LATERAL (
+            SELECT pl.place_id, pl.road_address,
+                   ROUND(ST_Distance(b.geom::geography, pl.geom::geography)::numeric, 1)::float8 AS distance_m
+            FROM core.places pl
+            ORDER BY b.geom <-> pl.geom
+            LIMIT 1
+        ) n ON TRUE
+        ORDER BY b.building_id
+        """,
+        (Param("max_distance_m", "Max centroid distance (m)", "float", 150, 1, 5000),),
+    ),
+    Scenario(
+        "DB2-2", "building", "Space hierarchy & device registration",
+        "Recursive walk of the floor / room tree with the devices installed in each space.",
+        "ready",
+        """
+        WITH RECURSIVE tree AS (
+            SELECT s.space_id, s.space_type, s.floor_number, 1 AS depth, s.space_name::text AS path
+            FROM building.spaces s
+            WHERE s.building_id = %(building_id)s AND s.parent_space_id IS NULL
+            UNION ALL
+            SELECT c.space_id, c.space_type, c.floor_number, t.depth + 1, t.path || ' > ' || c.space_name
+            FROM building.spaces c
+            JOIN tree t ON c.parent_space_id = t.space_id
+        )
+        SELECT t.path, t.space_type, t.floor_number, t.depth,
+               COUNT(d.device_id) AS devices,
+               STRING_AGG(d.device_id || ' (' || d.device_type || ')', ', ' ORDER BY d.device_id) AS installed
+        FROM tree t
+        LEFT JOIN building.device_space_assignments a ON a.space_id = t.space_id AND a.unassigned_at IS NULL
+        LEFT JOIN building.devices d ON d.device_id = a.device_id
+        GROUP BY t.space_id, t.path, t.space_type, t.floor_number, t.depth
+        ORDER BY t.floor_number, t.path
+        """,
+        (BUILDING,),
+    ),
+    Scenario(
+        "DB2-3", "building", "Device relocation history",
+        "Every space a device has been in; a move closes one row (unassigned_at) and opens the next.",
+        "ready",
+        """
+        SELECT a.assignment_id, sp.building_id, sp.space_name, sp.floor_number,
+               a.assigned_at, a.unassigned_at,
+               ROUND(EXTRACT(EPOCH FROM (COALESCE(a.unassigned_at, %(as_of)s::timestamptz) - a.assigned_at))
+                     / 86400, 1)::float8 AS days_in_space,
+               (a.unassigned_at IS NULL) AS is_current
+        FROM building.device_space_assignments a
+        JOIN building.spaces sp USING (space_id)
+        WHERE a.device_id = %(device_id)s
+        ORDER BY a.assigned_at
+        """,
+        (Param("device_id", "Device ID", "str", "DEV-PT-TMP-03"), AS_OF_BLD),
+    ),
+    Scenario(
+        "DB2-4", "building", "Missing heartbeat & fault detection",
+        "Anti-join: devices with no telemetry in the last N minutes before time T.",
+        "ready",
+        """
+        SELECT d.device_id, d.device_type, d.current_status, sp.building_id, sp.space_name,
+               last.observed_at AS last_seen,
+               ROUND(EXTRACT(EPOCH FROM (%(as_of)s::timestamptz - last.observed_at)) / 60)::int AS silent_minutes,
+               CASE WHEN last.observed_at IS NULL THEN 'NEVER_REPORTED'
+                    WHEN d.current_status = 'ACTIVE' THEN 'UNDETECTED_FAULT'
+                    ELSE 'KNOWN_ISSUE' END AS finding
+        FROM building.devices d
+        LEFT JOIN building.device_space_assignments a ON a.device_id = d.device_id AND a.unassigned_at IS NULL
+        LEFT JOIN building.spaces sp ON sp.space_id = a.space_id
+        LEFT JOIN LATERAL (
+            SELECT MAX(t.observed_at) AS observed_at
+            FROM building.telemetry t
+            WHERE t.device_id = d.device_id AND t.observed_at <= %(as_of)s::timestamptz
+        ) last ON TRUE
+        WHERE d.current_status <> 'RETIRED'
+          AND NOT EXISTS (
+              SELECT 1 FROM building.telemetry t
+              WHERE t.device_id = d.device_id
+                AND t.observed_at >  %(as_of)s::timestamptz - make_interval(mins => %(silent_minutes)s)
+                AND t.observed_at <= %(as_of)s::timestamptz)
+        ORDER BY last.observed_at NULLS FIRST, d.device_id
+        """,
+        (AS_OF_BLD, Param("silent_minutes", "Silent for more than (min)", "int", 15, 1, 1440)),
+    ),
+    Scenario(
+        "DB2-5", "building", "VIP facility state retrieval",
+        "Latest good reading per device in a building, with its age and maintenance status.",
+        "ready",
+        """
+        SELECT sp.floor_number, sp.space_name, d.device_id, d.device_type, d.current_status,
+               l.metric, l.value::float8 AS value, mt.unit, l.observed_at,
+               ROUND(EXTRACT(EPOCH FROM (%(as_of)s::timestamptz - l.observed_at)) / 60)::int AS age_minutes,
+               m.last_maintenance, m.open_actions
+        FROM building.spaces sp
+        JOIN building.device_space_assignments a ON a.space_id = sp.space_id AND a.unassigned_at IS NULL
+        JOIN building.devices d USING (device_id)
+        LEFT JOIN LATERAL (
+            SELECT t.metric, t.value, t.observed_at
+            FROM building.telemetry t
+            WHERE t.device_id = d.device_id AND t.quality_flag = 'GOOD'
+              AND t.observed_at <= %(as_of)s::timestamptz
+            ORDER BY t.observed_at DESC
+            LIMIT 1
+        ) l ON TRUE
+        LEFT JOIN building.metric_types mt ON mt.metric_code = l.metric
+        LEFT JOIN LATERAL (
+            SELECT MAX(ma.started_at) AS last_maintenance,
+                   COUNT(*) FILTER (WHERE ma.completed_at IS NULL) AS open_actions
+            FROM building.maintenance_actions ma
+            WHERE ma.device_id = d.device_id
+        ) m ON TRUE
+        WHERE sp.building_id = %(building_id)s
+        ORDER BY sp.floor_number, sp.space_name, d.device_id
+        """,
+        (BUILDING, AS_OF_BLD),
+    ),
     # --------------------------------------------------------------- tourism
     Scenario("DB3-1", "tourism", "Attractions & accessibility metadata",
              "Cultural venues with wheelchair access and parking."),
