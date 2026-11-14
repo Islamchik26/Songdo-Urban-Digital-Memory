@@ -1,0 +1,39 @@
+# Handbook baseline stack: PostgreSQL 16.3 + PostGIS 3.4 + API.
+# NOTE: written from the handbook spec but NOT yet run by the team (development
+# uses a native PostgreSQL install). Test it on a machine with working Docker.
+services:
+  db:
+    image: postgis/postgis:16-3.4-alpine
+    container_name: songdo_postgis
+    environment:
+      POSTGRES_DB: songdo_urban_memory
+      POSTGRES_USER: songdo_admin
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-songdo_local}
+    ports:
+      - "5432:5432"
+    volumes:
+      - songdo_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U songdo_admin -d songdo_urban_memory"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    container_name: songdo_api
+    environment:
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_NAME: songdo_urban_memory
+      DB_USER: songdo_admin
+      DB_PASSWORD: ${DB_PASSWORD:-songdo_local}
+      INGEST_API_TOKEN: ${INGEST_API_TOKEN:-songdo-dev-token}
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  songdo_pgdata:

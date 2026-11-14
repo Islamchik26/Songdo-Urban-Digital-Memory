@@ -1,0 +1,12 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+node_modules/
+ui/dist/
+outputs/*
+!outputs/evidence/
+outputs/evidence/*
+!outputs/evidence/.gitkeep
+*.backup
+.vscode/

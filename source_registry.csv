@@ -1,0 +1,10 @@
+source_id,title_ko,title_en,provider,source_url,verification_level,provenance,fallback_strategy,notes
+SRC_CORE_01,송도 주요 장소 수기 정리,Curated Songdo landmark list,Team (manual curation),,2,CURATED_MANUAL,Curated landmark fixture,Approximate centroids typed by hand; replace with geocoded official coordinates
+SRC_MOB_01,인천광역시_버스정류장 정보,Incheon bus stop information,Incheon City,https://www.data.go.kr,4,OFFICIAL_OPEN_DATA,Curated Songdo stop CSV fixture,Level from handbook; team must re-verify
+SRC_MOB_02,인천광역시_버스노선 정보,Incheon bus route information,Incheon City,https://www.data.go.kr,2,OFFICIAL_OPEN_DATA,Deterministic synthetic timetable,Level from handbook; team must re-verify
+SRC_BLD_01,국토교통부_건축물대장 정보,Building register information,MOLIT / VWorld,https://www.vworld.kr,2,OFFICIAL_OPEN_DATA,Landmark building registry fixture,Level from handbook; team must re-verify
+SRC_TOU_01,전국관광지정보표준데이터,National tourist attraction standard data,MOIS / data.go.kr,https://www.data.go.kr,4,OFFICIAL_OPEN_DATA,Songdo tourist centers fixture,Level from handbook; team must re-verify
+SRC_TOU_02,인천관광 방문객 통계,Incheon tourism visitor statistics,Incheon Tourism,https://www.data.go.kr,3,OFFICIAL_OPEN_DATA,Monthly visitor statistics fixture,Level from handbook; team must re-verify
+SRC_ENV_01,한국환경공단_에어코리아_대기오염정보,AirKorea air pollution information,KECO / AirKorea,https://www.data.go.kr,4,OFFICIAL_OPEN_DATA,Songdo station hourly air log,Level from handbook; team must re-verify
+SRC_SAF_01,인천광역시_소방서 현황(119안전센터),Incheon fire stations and 119 safety centers,Incheon Fire,https://www.data.go.kr,4,OFFICIAL_OPEN_DATA,Songdo safety stations fixture,Level from handbook; team must re-verify
+SRC_SAF_02,인하대학교_사고대응 훈련 합성데이터,Synthetic incident response drill data,Inha University,,4,SYNTHETIC_FIXTURE,"10,000+ incident drill generator",Synthetic by design; never presented as official data
