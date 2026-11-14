@@ -134,7 +134,7 @@ CREATE TABLE IF NOT EXISTS core.quarantine_records (
     target_table    VARCHAR(64)  NOT NULL,
     reason_code     VARCHAR(32)  NOT NULL CHECK (reason_code IN (
         'MISSING_COORDINATE', 'MALFORMED_COORDINATE', 'COORDINATE_SWAPPED', 'OUT_OF_BOUNDS',
-        'MISSING_FIELD', 'FAULT_READING', 'SCHEMA_VIOLATION', 'FK_VIOLATION', 'OTHER')),
+        'MISSING_FIELD', 'FAULT_READING', 'DUPLICATE_AUTHORITY', 'SCHEMA_VIOLATION', 'FK_VIOLATION', 'OTHER')),
     reason_detail   TEXT         NOT NULL,
     payload         JSONB        NOT NULL,
     payload_sha256  CHAR(64)     NOT NULL CHECK (payload_sha256 ~ '^[0-9a-f]{64}$'),

@@ -10,3 +10,6 @@ outputs/evidence/*
 !outputs/evidence/.gitkeep
 *.backup
 .vscode/
+# raw downloads are large; record file name + SHA-256 in source_registry.csv instead
+data/raw/*
+!data/raw/README.md

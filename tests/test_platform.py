@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from adapters.base_adapter import calculate_payload_hash, validate_coordinate  # noqa: E402
 from adapters.core_adapter import PlacesAdapter  # noqa: E402
+from adapters.mobility_adapter import StopsAdapter, VehicleObservationAdapter  # noqa: E402
 from api.config import settings  # noqa: E402
 from api.main import app  # noqa: E402
 from api.scenarios import SCENARIOS  # noqa: E402
@@ -71,7 +72,7 @@ class ScenarioRegistryTests(unittest.TestCase):
     def test_ready_scenarios_have_sql(self):
         for s in SCENARIOS.values():
             if s.status == "ready":
-                self.assertTrue(s.sql and s.sql.strip().upper().startswith("SELECT"), s.id)
+                self.assertTrue(s.sql and s.sql.strip().upper().startswith(("SELECT", "WITH")), s.id)
 
 
 class ApiValidationTests(unittest.TestCase):
@@ -108,6 +109,47 @@ class ApiValidationTests(unittest.TestCase):
         distances = [row["dist_m"] for row in body["rows"]]
         self.assertEqual(distances, sorted(distances))
         self.assertTrue(body["explain"])
+
+    def test_observation_endpoint_validates_input(self):
+        good = {"vehicle_id": "VEH-AV1-01", "lon": 126.6445, "lat": 37.3885, "speed_kmh": 12,
+                "observed_at": "2026-10-02T10:30:00+09:00"}
+        self.assertEqual(self.client.post("/api/v1/mobility/observation", json=good).status_code, 401)
+        headers = {"X-API-Token": settings.ingest_api_token}
+        for bad in ({**good, "speed_kmh": -3}, {**good, "observed_at": "2026-10-02T10:30:00"},
+                    {k: v for k, v in good.items() if k != "vehicle_id"}):
+            r = self.client.post("/api/v1/mobility/observation", json=bad, headers=headers)
+            self.assertEqual(r.status_code, 422, bad)
+
+    @needs_db
+    def test_every_ready_scenario_runs_with_defaults(self):
+        for s in SCENARIOS.values():
+            if s.status == "ready":
+                r = self.client.post(f"/api/v1/scenarios/{s.id}/run", json={})
+                self.assertEqual(r.status_code, 200, f"{s.id}: {r.text[:300]}")
+                if s.domain != "core":
+                    self.assertGreater(r.json()["row_count"], 0, s.id)
+
+    @needs_db
+    def test_route_sequence_is_gap_free(self):
+        r = self.client.get("/api/v1/mobility/routes/8/stops?direction=0")
+        self.assertEqual(r.status_code, 200)
+        orders = [row["sequence_order"] for row in r.json()]
+        self.assertEqual(orders, list(range(1, len(orders) + 1)))
+        self.assertEqual(self.client.get("/api/v1/mobility/routes/NOPE/stops").status_code, 404)
+
+    @needs_db
+    def test_point_in_time_replay(self):
+        t = "2026-10-02T08:20:00+09:00"
+        rows = self.client.get("/api/v1/mobility/vehicles/positions", params={"as_of": t}).json()
+        self.assertGreater(len(rows), 0)
+        self.assertEqual(len(rows), len({r["vehicle_id"] for r in rows}))        # one row per vehicle
+        self.assertTrue(all(r["staleness_seconds"] >= 0 for r in rows))           # nothing from the future
+        before_service = self.client.get("/api/v1/mobility/vehicles/positions",
+                                         params={"as_of": "2026-10-02T05:00:00+09:00"}).json()
+        self.assertEqual(before_service, [])
+        geo = self.client.get("/api/v1/mobility/stops.geojson").json()
+        self.assertEqual(geo["type"], "FeatureCollection")
+        self.assertGreater(len(geo["features"]), 100)
 
 
 @needs_db
@@ -167,6 +209,77 @@ class DatabaseTests(unittest.TestCase):
                WHERE ST_DWithin(geom::geography,
                      ST_SetSRID(ST_MakePoint(126.6548, 37.3888), 4326)::geography, 1000)"""))
         self.assertIn("idx_places_geog", plan)
+
+
+@needs_db
+class MobilityDatabaseTests(unittest.TestCase):
+    def setUp(self):
+        self.conn = psycopg.connect(settings.conninfo())
+        self.conn.execute("SELECT 1")  # open the transaction; everything below is rolled back
+
+    def tearDown(self):
+        self.conn.rollback()
+        self.conn.close()
+
+    def test_lateness_and_dwell_are_generated(self):
+        mismatches = self.conn.execute(
+            """SELECT count(*) FROM mobility.trip_stop_events
+               WHERE lateness_seconds <> EXTRACT(EPOCH FROM observed_arrival - scheduled_arrival)::int
+                  OR dwell_seconds   <> EXTRACT(EPOCH FROM observed_departure - observed_arrival)::int""").fetchone()[0]
+        self.assertEqual(mismatches, 0)
+        with self.assertRaises(psycopg.errors.GeneratedAlways):
+            with self.conn.transaction():
+                self.conn.execute("UPDATE mobility.trip_stop_events SET lateness_seconds = 0")
+
+    def test_vehicle_cannot_run_overlapping_trips(self):
+        with self.assertRaises(psycopg.errors.ExclusionViolation):
+            with self.conn.transaction():
+                self.conn.execute(
+                    """INSERT INTO mobility.trips (trip_id, route_id, direction, vehicle_id, service_date,
+                                                   scheduled_departure, scheduled_arrival, source_id)
+                       SELECT 'T-OVERLAP', route_id, direction, vehicle_id, service_date,
+                              scheduled_departure + interval '1 minute', scheduled_arrival, source_id
+                       FROM mobility.trips WHERE trip_id = 'T20261002-8-0-0800'""")
+
+    def test_stops_adapter_real_file_rules(self):
+        base = {"정류장명": "테스트정류장", "위도": "37.3900", "경도": "126.6400", "정보수집일": "2026-11-09",
+                "도시코드": "23", "도시명": "인천광역시"}
+        rows = [
+            {**base, "정류장번호": "ICB_TEST_1", "모바일단축번호": "99001", "관리도시명": "인천BIS"},
+            {**base, "정류장번호": "GGB_TEST_1", "모바일단축번호": "99001", "관리도시명": "경기BIS"},
+            {**base, "정류장번호": "ICB_TEST_2", "모바일단축번호": "99002", "관리도시명": "인천BIS",
+             "위도": "37.4563", "경도": "126.7052"},                       # Incheon mainland
+            {**base, "정류장번호": "ICB_TEST_3", "모바일단축번호": "99003", "관리도시명": "인천BIS",
+             "위도": "126.6400", "경도": "37.3900"},                       # lat/lon swapped
+        ]
+        summary = StopsAdapter(self.conn, actor="TEST").ingest(rows)
+        self.assertEqual((summary.loaded, summary.quarantined), (1, 3))
+        reasons = sorted(r[0] for r in self.conn.execute(
+            "SELECT reason_code FROM core.quarantine_records WHERE batch_id = %s", (summary.batch_id,)))
+        self.assertEqual(reasons, ["COORDINATE_SWAPPED", "DUPLICATE_AUTHORITY", "OUT_OF_BOUNDS"])
+        name = self.conn.execute("SELECT stop_name_ko FROM mobility.stops WHERE stop_id = 'ICB_TEST_1'").fetchone()[0]
+        self.assertEqual(name, "테스트정류장")   # Korean text survives the round trip
+
+    def test_observation_adapter(self):
+        good = {"vehicle_id": "VEH-AV1-01", "lon": 126.6445, "lat": 37.3885, "speed_kmh": 14.0,
+                "observed_at": "2026-10-03T09:00:00+09:00"}
+        rows = [good,
+                {**good, "vehicle_id": "NO-SUCH-VEHICLE"},
+                {**good, "lon": 126.9780, "lat": 37.5665, "observed_at": "2026-10-03T09:00:10+09:00"},
+                good]
+        summary = VehicleObservationAdapter(self.conn, actor="TEST").ingest(rows)
+        self.assertEqual((summary.loaded, summary.quarantined, summary.duplicates), (1, 2, 1))
+        reasons = sorted(r[0] for r in self.conn.execute(
+            "SELECT reason_code FROM core.quarantine_records WHERE batch_id = %s", (summary.batch_id,)))
+        self.assertEqual(reasons, ["FK_VIOLATION", "OUT_OF_BOUNDS"])
+
+    def test_candidate_stop_search_uses_gist_index(self):
+        self.conn.execute("SET LOCAL enable_seqscan = off")
+        plan = "\n".join(r[0] for r in self.conn.execute(
+            """EXPLAIN SELECT s.stop_id FROM mobility.stops s
+               WHERE ST_DWithin(s.geom::geography,
+                     ST_SetSRID(ST_MakePoint(126.6445, 37.3885), 4326)::geography, 400)"""))
+        self.assertIn("idx_stops_geog", plan)
 
 
 if __name__ == "__main__":

@@ -77,6 +77,8 @@ LON = Param("lon", "Longitude", "float", 126.6548, -180, 180)
 LAT = Param("lat", "Latitude", "float", 37.3888, -90, 90)
 RADIUS = Param("radius_m", "Radius (m)", "float", 1000, 1, 20000)
 LIMIT = Param("limit", "Max rows", "int", 50, 1, 500)
+ROUTE = Param("route_number", "Route number (8, SD-A, AV-1)", "str", "8")
+DIRECTION = Param("direction", "Direction (0 or 1)", "int", 0, 0, 1)
 
 _SCENARIOS: list[Scenario] = [
     # ------------------------------------------------------------------ core
@@ -133,16 +135,118 @@ _SCENARIOS: list[Scenario] = [
         (LIMIT,),
     ),
     # -------------------------------------------------------------- mobility
-    Scenario("DB1-1", "mobility", "Ordered route sequence",
-             "Stops of Route 8 in order; (route_id, direction, sequence_order) guarantees ordering."),
-    Scenario("DB1-2", "mobility", "Trip execution & stop arrivals",
-             "Dwell times, boardings and lateness computed by generated columns."),
-    Scenario("DB1-3", "mobility", "Historical position replay",
-             "Where was every vehicle at time T? DISTINCT ON point-in-time reconstruction."),
-    Scenario("DB1-4", "mobility", "Peak-hour lateness & gap analysis",
-             "LAG(observed_arrival) window function detects bunching and headway gaps."),
-    Scenario("DB1-5", "mobility", "Smart Mobility telemetry ingestion",
-             "High-frequency GPS ingestion with candidate stops within 400 m."),
+    Scenario(
+        "DB1-1", "mobility", "Ordered route sequence",
+        "Stops of a route in order; (route_id, direction, sequence_order) guarantees ordering.",
+        "ready",
+        """
+        SELECT rs.sequence_order, s.stop_id, s.stop_number, s.stop_name_ko,
+               ST_X(s.geom) AS lon, ST_Y(s.geom) AS lat,
+               ROUND(ST_Distance(s.geom::geography, LAG(s.geom::geography) OVER w)::numeric)::int
+                   AS metres_from_previous
+        FROM mobility.routes r
+        JOIN mobility.route_stops rs USING (route_id)
+        JOIN mobility.stops s USING (stop_id)
+        WHERE r.route_number = %(route_number)s AND rs.direction = %(direction)s
+        WINDOW w AS (ORDER BY rs.sequence_order)
+        ORDER BY rs.sequence_order
+        """,
+        (ROUTE, DIRECTION),
+    ),
+    Scenario(
+        "DB1-2", "mobility", "Trip execution & stop arrivals",
+        "Dwell time and lateness come from generated columns; load is a running sum.",
+        "ready",
+        """
+        SELECT e.sequence_order, s.stop_name_ko, e.scheduled_arrival, e.observed_arrival,
+               e.lateness_seconds, e.dwell_seconds, e.boardings, e.alightings,
+               SUM(e.boardings - e.alightings) OVER (ORDER BY e.sequence_order) AS passengers_on_board
+        FROM mobility.trip_stop_events e
+        JOIN mobility.stops s USING (stop_id)
+        WHERE e.trip_id = %(trip_id)s
+        ORDER BY e.sequence_order
+        """,
+        (Param("trip_id", "Trip ID", "str", "T20261002-8-0-0800"),),
+    ),
+    Scenario(
+        "DB1-3", "mobility", "Historical position replay",
+        "Where was every vehicle at time T? DISTINCT ON point-in-time reconstruction.",
+        "ready",
+        """
+        SELECT DISTINCT ON (o.vehicle_id)
+               o.vehicle_id, v.vehicle_type, o.trip_id,
+               ST_X(o.geom) AS lon, ST_Y(o.geom) AS lat,
+               o.speed_kmh::float8 AS speed_kmh,
+               o.battery_state_of_charge_pct::float8 AS battery_state_of_charge_pct, o.observed_at,
+               ROUND(EXTRACT(EPOCH FROM (%(as_of)s::timestamptz - o.observed_at)))::int AS staleness_seconds
+        FROM mobility.vehicle_observations o
+        JOIN mobility.vehicles v USING (vehicle_id)
+        WHERE o.observed_at <= %(as_of)s::timestamptz
+        ORDER BY o.vehicle_id, o.observed_at DESC
+        """,
+        (Param("as_of", "As of time (ISO, with offset)", "datetime", "2026-10-02T08:20:00+09:00"),),
+    ),
+    Scenario(
+        "DB1-4", "mobility", "Peak-hour lateness & gap analysis",
+        "LAG(observed_arrival) per stop gives the real headway; flags bunching and gaps.",
+        "ready",
+        """
+        WITH arrivals AS (
+            SELECT t.direction, e.stop_id, e.trip_id, e.observed_arrival, e.lateness_seconds,
+                   EXTRACT(EPOCH FROM e.observed_arrival  - LAG(e.observed_arrival)  OVER w)::int AS headway_seconds,
+                   EXTRACT(EPOCH FROM e.scheduled_arrival - LAG(e.scheduled_arrival) OVER w)::int AS scheduled_headway_seconds
+            FROM mobility.trip_stop_events e
+            JOIN mobility.trips t USING (trip_id)
+            JOIN mobility.routes r USING (route_id)
+            WHERE r.route_number = %(route_number)s
+              AND e.observed_arrival >= %(from_time)s::timestamptz
+              AND e.observed_arrival <  %(to_time)s::timestamptz
+            WINDOW w AS (PARTITION BY t.route_id, t.direction, e.stop_id ORDER BY e.observed_arrival)
+        )
+        SELECT a.direction, s.stop_name_ko, a.trip_id, a.observed_arrival, a.lateness_seconds,
+               a.headway_seconds, a.scheduled_headway_seconds,
+               CASE WHEN a.headway_seconds < 0.75 * a.scheduled_headway_seconds THEN 'BUNCHED'
+                    WHEN a.headway_seconds > 1.25 * a.scheduled_headway_seconds THEN 'GAP'
+                    ELSE 'OK' END AS headway_status
+        FROM arrivals a
+        JOIN mobility.stops s USING (stop_id)
+        WHERE a.headway_seconds IS NOT NULL
+        ORDER BY ABS(a.headway_seconds - a.scheduled_headway_seconds) DESC, a.observed_arrival
+        LIMIT %(limit)s
+        """,
+        (ROUTE,
+         Param("from_time", "From (ISO, with offset)", "datetime", "2026-10-02T07:00:00+09:00"),
+         Param("to_time", "To (ISO, with offset)", "datetime", "2026-10-02T09:30:00+09:00"),
+         LIMIT),
+    ),
+    Scenario(
+        "DB1-5", "mobility", "Smart Mobility telemetry: candidate stops",
+        "For a vehicle's latest GPS points, the stops within the radius (ST_DWithin on geography).",
+        "ready",
+        """
+        SELECT o.observation_id, o.vehicle_id, o.observed_at, o.speed_kmh::float8 AS speed_kmh,
+               c.stop_id, c.stop_name_ko, c.distance_m
+        FROM (
+            SELECT observation_id, vehicle_id, observed_at, speed_kmh, geom
+            FROM mobility.vehicle_observations
+            WHERE vehicle_id = %(vehicle_id)s
+            ORDER BY observed_at DESC
+            LIMIT %(last_n)s
+        ) o
+        CROSS JOIN LATERAL (
+            SELECT s.stop_id, s.stop_name_ko,
+                   ROUND(ST_Distance(o.geom::geography, s.geom::geography)::numeric, 1)::float8 AS distance_m
+            FROM mobility.stops s
+            WHERE ST_DWithin(o.geom::geography, s.geom::geography, %(radius_m)s)
+            ORDER BY distance_m
+            LIMIT 3
+        ) c
+        ORDER BY o.observed_at DESC, c.distance_m
+        """,
+        (Param("vehicle_id", "Vehicle ID", "str", "VEH-AV1-01"),
+         Param("radius_m", "Radius (m)", "float", 400, 1, 5000),
+         Param("last_n", "Latest GPS points", "int", 5, 1, 100)),
+    ),
     # -------------------------------------------------------------- building
     Scenario("DB2-1", "building", "Building & address reconciliation",
              "Links building registry rows to canonical PostGIS centroids."),

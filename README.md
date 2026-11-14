@@ -12,7 +12,8 @@ project task.
 | Ingestion pipeline: validate → SHA-256 dedup → quarantine → load → audit | Done (core places) |
 | API: `/health`, `/api/v1/core/*`, `/api/v1/scenarios` | Done |
 | Web console: pick a task, set parameters, run it, see rows + SQL + query plan | Done (shell) |
-| DB1–DB5 domain schemas and their 25 scenarios | Registered as *planned* |
+| DB1 Mobility (`sql/02`): schema, real stop data, fixtures, 5 scenarios, `/api/v1/mobility/*` | Done |
+| DB2–DB5 domain schemas and their 20 scenarios | Registered as *planned* |
 | Cross-domain views, consumers, LaTeX handbook | Not started |
 
 ## Setup (native PostgreSQL, no Docker)
@@ -49,6 +50,17 @@ python scripts/setup_db.py              # runs sql/*.sql in order, then loads th
 ```
 
 Use `python scripts/setup_db.py --reset` to drop every project schema and rebuild from zero.
+
+**4b. (Optional) Ingest the real bus stop file.** The seed already contains the 513 Songdo
+stops (`fixtures/songdo_stops.csv`, extracted from the official file). To run the full
+pipeline on the original download, put the CSV in `data/raw/` (see `data/raw/README.md`) and:
+
+```bash
+python scripts/ingest_bus_stops.py
+```
+
+Of 9,657 Incheon rows it loads 513 Songdo stops and quarantines 9,144 (8,935 outside the
+bbox, 209 copies published by a second bus system). A second run changes nothing.
 
 **5. Run.**
 
@@ -89,6 +101,9 @@ npm run dev        # http://localhost:5173 (needs the API running on :8000)
 - **Local stack differs from the handbook** (PostgreSQL 18 / PostGIS 3.7 here, 16.3 / 3.4 in the
   handbook). Avoid features newer than PostgreSQL 16. `compose.yaml` and `Dockerfile` follow the
   handbook but have not been run yet.
+- **What is real in DB1:** stop IDs, names and coordinates (source `SRC_MOB_03`). Route patterns,
+  trips, arrivals and GPS telemetry are generated (`SRC_MOB_SYN`): the "Route 8" pattern is a
+  corridor snapped to real stops, not the real Route 8.
 - Landmark coordinates in the seed data are approximate and typed by hand (`SRC_CORE_01`).
   Verification levels in `source_registry.csv` are copied from the handbook and still need to
   be re-verified by the team.
