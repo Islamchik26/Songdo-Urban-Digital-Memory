@@ -19,6 +19,7 @@ from adapters.base_adapter import calculate_payload_hash, validate_coordinate  #
 from adapters.building_adapter import BuildingTelemetryAdapter  # noqa: E402
 from adapters.core_adapter import PlacesAdapter  # noqa: E402
 from adapters.mobility_adapter import StopsAdapter, VehicleObservationAdapter  # noqa: E402
+from adapters.tourism_adapter import AttractionsAdapter, VisitSamplesAdapter  # noqa: E402
 from api.config import settings  # noqa: E402
 from api.main import app  # noqa: E402
 from api.scenarios import SCENARIOS  # noqa: E402
@@ -180,6 +181,37 @@ class ApiValidationTests(unittest.TestCase):
             self.assertEqual(r.status_code, 422, bad)
         r = self.client.post("/api/v1/building/devices/DEV-GT-TMP-01/relocate", json={"space_id": "X"},
                              headers=headers)
+        self.assertEqual(r.status_code, 422)
+
+    @needs_db
+    def test_tourism_read_endpoints(self):
+        everything = self.client.get("/api/v1/tourism/attractions").json()
+        accessible = self.client.get("/api/v1/tourism/attractions", params={"wheelchair_accessible": True}).json()
+        self.assertTrue(0 < len(accessible) < len(everything))
+        self.assertTrue(all(a["is_wheelchair_accessible"] for a in accessible))
+
+        def open_ids(at):
+            rows = self.client.get("/api/v1/tourism/attractions/open", params={"at": at, "radius_m": 3000}).json()
+            return {r["attraction_id"] for r in rows}
+        friday, monday = open_ids("2026-10-02T14:00:00+09:00"), open_ids("2026-10-05T14:00:00+09:00")
+        self.assertIn("ATT_TRIBOWL", friday)
+        self.assertNotIn("ATT_TRIBOWL", monday)                 # closed on Mondays
+        self.assertNotIn("ATT_HANOK_VILLAGE", open_ids("2026-10-02T16:00:00+09:00"))   # between lunch and dinner
+        # the same instant written in UTC gives the same answer
+        self.assertEqual(friday, open_ids("2026-10-02T05:00:00+00:00"))
+
+        events = self.client.get("/api/v1/tourism/events").json()
+        self.assertNotIn("EVT_PARK_MARKET", {e["event_id"] for e in events})          # cancelled
+        r = self.client.get("/api/v1/tourism/events", params={"from_date": "2026-10-05", "to_date": "2026-10-01"})
+        self.assertEqual(r.status_code, 422)
+        self.assertEqual(self.client.get("/api/v1/tourism/attractions/NOPE/visits").status_code, 404)
+
+    @needs_db
+    def test_scenario_bad_date_range_is_422_not_500(self):
+        r = self.client.post("/api/v1/scenarios/DB3-2/run",
+                             json={"params": {"from_date": "2026-10-05", "to_date": "2026-10-01"}})
+        self.assertEqual(r.status_code, 422)
+        r = self.client.post("/api/v1/scenarios/DB3-4/run", json={"params": {"at_time": "25:99"}})
         self.assertEqual(r.status_code, 422)
 
 
@@ -373,6 +405,75 @@ class BuildingDatabaseTests(unittest.TestCase):
                WHERE device_id = 'DEV-GT-TMP-01' AND observed_at >= '2026-10-03T00:00:00+09:00'
                ORDER BY observed_at""").fetchall()
         self.assertEqual(flags, [(22.5, "GOOD"), (480.0, "SUSPECT")])
+
+
+@needs_db
+class TourismDatabaseTests(unittest.TestCase):
+    def setUp(self):
+        self.conn = psycopg.connect(settings.conninfo())
+        self.conn.execute("SELECT 1")  # open the transaction; everything below is rolled back
+
+    def tearDown(self):
+        self.conn.rollback()
+        self.conn.close()
+
+    def _rejects(self, error, sql):
+        with self.assertRaises(error):
+            with self.conn.transaction():
+                self.conn.execute(sql)
+
+    def test_schedule_constraints(self):
+        # overlapping open intervals on the same day
+        self._rejects(psycopg.errors.ExclusionViolation,
+                      """INSERT INTO tourism.operating_hours (attraction_id, day_of_week, opens_at, closes_at)
+                         VALUES ('ATT_HANOK_VILLAGE', 3, '14:00', '18:00')""")
+        # event that ends before it starts
+        self._rejects(psycopg.errors.CheckViolation,
+                      """INSERT INTO tourism.events (event_id, attraction_id, event_name_ko, event_type, start_date,
+                             end_date, daily_start_time, daily_end_time, expected_attendance, source_id)
+                         VALUES ('EVT_BAD', 'ATT_TRIBOWL', 'x', 'CONCERT', '2026-10-05', '2026-10-04',
+                                 '10:00', '12:00', 10, 'SRC_TOU_SYN')""")
+        # hourly sample that is not on the hour
+        self._rejects(psycopg.errors.CheckViolation,
+                      """INSERT INTO tourism.sample_visits (attraction_id, hour_start, visitor_count, source_id, received_at)
+                         VALUES ('ATT_TRIBOWL', '2026-10-03T10:30:00+09:00', 5, 'SRC_TOU_SYN', now())""")
+
+    def test_monthly_totals_and_samples_stay_separate(self):
+        month_rows, sample_rows, coverage = self.conn.execute(
+            """SELECT (SELECT count(*) FROM tourism.aggregate_visits WHERE year_month = '2026-09-01'),
+                      (SELECT count(*) FROM tourism.sample_visits
+                       WHERE hour_start >= '2026-09-01+09' AND hour_start < '2026-10-01+09'),
+                      (SELECT sum(visitor_count) FROM tourism.sample_visits
+                       WHERE hour_start >= '2026-09-01+09' AND hour_start < '2026-10-01+09')::float
+                      / (SELECT sum(visitor_count) FROM tourism.aggregate_visits WHERE year_month = '2026-09-01')"""
+        ).fetchone()
+        self.assertEqual(sample_rows, month_rows * 30 * 24)     # one row per attraction per hour
+        self.assertTrue(0.2 < coverage < 0.5)                    # the sample is a fraction of the total
+
+    def test_tourism_adapters(self):
+        base = {"attraction_id": "ATT_TEST", "attraction_name_ko": "테스트 전시관", "category": "CULTURE",
+                "is_wheelchair_accessible": "가능", "has_parking": "N", "lon": 126.64, "lat": 37.39}
+        summary = AttractionsAdapter(self.conn, actor="TEST").ingest([
+            base,
+            {**base, "attraction_id": "ATT_TEST_FAR", "lon": 126.978, "lat": 37.5665},
+            {**base, "attraction_id": "ATT_TEST_BOOL", "has_parking": "maybe"},
+        ])
+        self.assertEqual((summary.loaded, summary.quarantined), (1, 2))
+        self.assertEqual(self.conn.execute(
+            "SELECT is_wheelchair_accessible, has_parking FROM tourism.attractions WHERE attraction_id = 'ATT_TEST'"
+        ).fetchone(), (True, False))
+
+        sample = {"attraction_id": "ATT_TRIBOWL", "hour_start": "2026-10-03T10:00:00+09:00", "visitor_count": 12}
+        summary = VisitSamplesAdapter(self.conn, actor="TEST").ingest([
+            sample,
+            {**sample, "hour_start": "2026-10-03T11:00:00+09:00", "visitor_count": -4},
+            {**sample, "hour_start": "2026-10-03T12:15:00+09:00"},
+            {**sample, "attraction_id": "ATT_NOPE"},
+        ])
+        self.assertEqual((summary.loaded, summary.quarantined), (1, 3))
+        reasons = sorted(r[0] for r in self.conn.execute(
+            "SELECT reason_code FROM core.quarantine_records WHERE batch_id = %s", (summary.batch_id,)))
+        self.assertEqual(reasons, ["FAULT_READING", "FK_VIOLATION", "SCHEMA_VIOLATION"])
 
 
 if __name__ == "__main__":

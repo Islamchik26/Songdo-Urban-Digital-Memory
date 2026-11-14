@@ -8,6 +8,7 @@ SRC_BLD_01,국토교통부_건축물대장 정보,Building register information,
 SRC_BLD_SYN,송도 스마트빌딩 합성 IoT 데이터,Synthetic smart-building IoT data,Team (generator),,4,SYNTHETIC_FIXTURE,Deterministic generator fixtures/building_section.py,"Interior spaces, devices, telemetry and maintenance are generated; not official data"
 SRC_TOU_01,전국관광지정보표준데이터,National tourist attraction standard data,MOIS / data.go.kr,https://www.data.go.kr,4,OFFICIAL_OPEN_DATA,Songdo tourist centers fixture,Level from handbook; team must re-verify
 SRC_TOU_02,인천관광 방문객 통계,Incheon tourism visitor statistics,Incheon Tourism,https://www.data.go.kr,3,OFFICIAL_OPEN_DATA,Monthly visitor statistics fixture,Level from handbook; team must re-verify
+SRC_TOU_SYN,송도 관광 합성 데이터,Synthetic Songdo tourism data,Team (generator),,4,SYNTHETIC_FIXTURE,Deterministic generator fixtures/tourism_section.py,"Real venue names; hours, accessibility, events and ALL visitor numbers (incl. monthly totals) are placeholders"
 SRC_ENV_01,한국환경공단_에어코리아_대기오염정보,AirKorea air pollution information,KECO / AirKorea,https://www.data.go.kr,4,OFFICIAL_OPEN_DATA,Songdo station hourly air log,Level from handbook; team must re-verify
 SRC_SAF_01,인천광역시_소방서 현황(119안전센터),Incheon fire stations and 119 safety centers,Incheon Fire,https://www.data.go.kr,4,OFFICIAL_OPEN_DATA,Songdo safety stations fixture,Level from handbook; team must re-verify
 SRC_SAF_02,인하대학교_사고대응 훈련 합성데이터,Synthetic incident response drill data,Inha University,,4,SYNTHETIC_FIXTURE,"10,000+ incident drill generator",Synthetic by design; never presented as official data

@@ -2,7 +2,7 @@
 
     python fixtures/seed_fixtures.py [N]
 
-N (default 1000) scales the high-volume telemetry: about 10 x N vehicle GPS rows.
+N (default 1000) scales the high-volume telemetry: about 20 x N vehicle GPS rows.
 
 Deterministic means: same N -> byte-identical seed_data.sql. No wall-clock
 values and no unseeded randomness may be written into the file.
@@ -28,6 +28,7 @@ sys.path.insert(0, str(ROOT))
 
 from fixtures.building_section import building_section  # noqa: E402
 from fixtures.common import BBOX, SERVICE_DAY, insert, point  # noqa: E402
+from fixtures.tourism_section import tourism_section  # noqa: E402
 OUT = ROOT / "fixtures" / "seed_data.sql"
 SEED = 20261002
 
@@ -65,8 +66,9 @@ ROUTES = [
      ["PLC_STN_INU", "PLC_CONVENSIA", "PLC_HAEDOJI_PARK"], 10, 15.0, "AUTONOMOUS_SHUTTLE", 12),
 ]
 FIRST_DEPARTURE = timedelta(hours=6, minutes=30)
-LAST_DEPARTURE = timedelta(hours=10)
-PEAK = (timedelta(hours=7, minutes=30), timedelta(hours=9))
+LAST_DEPARTURE = timedelta(hours=22)                      # service runs 06:30-22:00
+PEAKS = [(timedelta(hours=7, minutes=30), timedelta(hours=9)),      # morning rush
+         (timedelta(hours=17, minutes=30), timedelta(hours=19, minutes=30))]  # evening rush
 LAYOVER = timedelta(minutes=12)
 MAX_LATENESS_S = 540
 
@@ -196,7 +198,7 @@ def mobility_section(rng: random.Random, n: int) -> list[str]:
                 trip_rows.append([trip_id, route_id, direction, vid, start.date().isoformat(), start, end,
                                   "COMPLETED", "SRC_MOB_SYN"])
                 # observed run: lateness drifts, more during the peak
-                in_peak = PEAK[0] <= departure < PEAK[1]
+                in_peak = any(a <= departure < b for a, b in PEAKS)
                 late = rng.gauss(15, 25)
                 knots, prev_departure, load = [], None, 0
                 for seq, (stop, planned) in enumerate(zip(pattern, sched), 1):
@@ -218,7 +220,7 @@ def mobility_section(rng: random.Random, n: int) -> list[str]:
 
     # GPS telemetry: sample every `interval` seconds along each trip's timeline
     total_s = sum((k[-1][0] - k[0][0]).total_seconds() for *_, k in timelines)
-    interval = int(max(5, min(120, round(total_s / (10 * n)))))
+    interval = int(max(5, min(120, round(total_s / (20 * n)))))
     battery: dict[str, float] = {}
     obs_rows = []
     for vid, vtype, trip_id, knots in sorted(timelines, key=lambda t: (t[3][0][0], t[0])):
@@ -279,7 +281,8 @@ def main() -> None:
     lines += core_section()
     lines += mobility_section(rng, n)
     lines += building_section(rng, n, PLACE_XY)
-    # Next domain sections (tourism, environment, safety) are appended here.
+    lines += tourism_section(rng, PLACE_XY)
+    # Next domain sections (environment, safety) are appended here.
 
     OUT.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
     print(f"Wrote {OUT.relative_to(ROOT)} ({OUT.stat().st_size / 1024:.0f} kB, N={n})")

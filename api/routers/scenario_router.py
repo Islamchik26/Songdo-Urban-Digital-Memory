@@ -4,6 +4,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
+import psycopg
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
@@ -44,16 +45,22 @@ def run_scenario(scenario_id: str, body: RunRequest) -> dict[str, Any]:
             raise HTTPException(422, str(exc)) from None
 
     plan: list[str] | None = None
-    with pool.connection() as conn:
-        conn.execute("SET TRANSACTION READ ONLY")
-        started = time.perf_counter()
-        cur = conn.execute(scenario.sql, bound)
-        rows = cur.fetchmany(MAX_ROWS)
-        truncated = cur.fetchone() is not None
-        elapsed_ms = (time.perf_counter() - started) * 1000
-        if body.explain:
-            plan = [r["QUERY PLAN"] for r in
-                    conn.execute("EXPLAIN (ANALYZE, BUFFERS) " + scenario.sql, bound).fetchall()]
+    try:
+        with pool.connection() as conn:
+            conn.execute("SET TRANSACTION READ ONLY")
+            started = time.perf_counter()
+            cur = conn.execute(scenario.sql, bound)
+            rows = cur.fetchmany(MAX_ROWS)
+            truncated = cur.fetchone() is not None
+            elapsed_ms = (time.perf_counter() - started) * 1000
+            if body.explain:
+                plan = [r["QUERY PLAN"] for r in
+                        conn.execute("EXPLAIN (ANALYZE, BUFFERS) " + scenario.sql, bound).fetchall()]
+    except psycopg.errors.DataError as exc:
+        if exc.sqlstate is None:   # raised by the driver, not by the server: a bug on our side, not bad input
+            raise
+        # the server rejected a value, e.g. a date range whose end is before its start
+        raise HTTPException(422, exc.diag.message_primary or "Invalid parameter value") from None
 
     return {
         "scenario_id": scenario.id,

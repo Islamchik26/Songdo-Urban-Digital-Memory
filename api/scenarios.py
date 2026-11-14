@@ -10,7 +10,7 @@ SQL rules: SELECT only (it runs in a READ ONLY transaction), parameters as
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import date, datetime, time
 from typing import Any
 
 DOMAINS = {
@@ -27,7 +27,7 @@ DOMAINS = {
 class Param:
     name: str
     label: str
-    type: str = "float"          # float | int | str | datetime
+    type: str = "float"          # float | int | str | datetime | date | time
     default: Any = None
     min: float | None = None
     max: float | None = None
@@ -47,6 +47,10 @@ class Param:
                 value = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
                 if value.tzinfo is None:
                     raise ValueError("timezone offset is required, e.g. 2026-10-02T08:20:00+09:00")
+            elif self.type == "date":
+                value = date.fromisoformat(str(raw))
+            elif self.type == "time":
+                value = time.fromisoformat(str(raw))
             else:
                 value = str(raw)
         except (TypeError, ValueError) as exc:
@@ -378,16 +382,147 @@ _SCENARIOS: list[Scenario] = [
         (BUILDING, AS_OF_BLD),
     ),
     # --------------------------------------------------------------- tourism
-    Scenario("DB3-1", "tourism", "Attractions & accessibility metadata",
-             "Cultural venues with wheelchair access and parking."),
-    Scenario("DB3-2", "tourism", "Event management & schedule integrity",
-             "end_date >= start_date and valid daily operating intervals."),
-    Scenario("DB3-3", "tourism", "Official statistics vs. synthetic samples",
-             "Monthly government totals kept apart from hourly sample counts."),
-    Scenario("DB3-4", "tourism", "Open attractions near transit",
-             "Attractions open on the requested weekday within a radius of a stop."),
-    Scenario("DB3-5", "tourism", "Temporal demand & crowd forecasting",
-             "Conference attendance against nearby transit capacity."),
+    Scenario(
+        "DB3-1", "tourism", "Attractions & accessibility metadata",
+        "Venues with wheelchair access and parking, plus the nearest bus stop.",
+        "ready",
+        """
+        SELECT a.attraction_id, a.attraction_name_ko, a.category, a.is_wheelchair_accessible,
+               a.has_parking, a.parking_spaces, a.admission_fee_krw,
+               n.stop_name_ko AS nearest_stop, n.distance_m AS stop_distance_m
+        FROM tourism.attractions a
+        LEFT JOIN LATERAL (
+            SELECT s.stop_name_ko,
+                   ROUND(ST_Distance(a.geom::geography, s.geom::geography)::numeric, 1)::float8 AS distance_m
+            FROM mobility.stops s
+            ORDER BY a.geom <-> s.geom
+            LIMIT 1
+        ) n ON TRUE
+        WHERE (%(wheelchair_only)s = 0 OR a.is_wheelchair_accessible)
+          AND (%(parking_only)s = 0 OR a.has_parking)
+        ORDER BY a.attraction_name_ko
+        """,
+        (Param("wheelchair_only", "Wheelchair accessible only (0 or 1)", "int", 0, 0, 1),
+         Param("parking_only", "With parking only (0 or 1)", "int", 0, 0, 1)),
+    ),
+    Scenario(
+        "DB3-2", "tourism", "Event management & schedule integrity",
+        "Events in a date range, checked against the venue's operating hours on every event day.",
+        "ready",
+        """
+        SELECT e.event_id, e.event_name_ko, a.attraction_name_ko AS venue, e.event_type,
+               e.start_date, e.end_date, (e.end_date - e.start_date + 1) AS days,
+               e.daily_start_time, e.daily_end_time, e.expected_attendance,
+               CASE WHEN e.is_cancelled THEN 'CANCELLED'
+                    WHEN EXISTS (
+                        SELECT 1
+                        FROM generate_series(e.start_date::timestamp, e.end_date::timestamp, INTERVAL '1 day') AS d
+                        WHERE NOT EXISTS (
+                            SELECT 1 FROM tourism.operating_hours h
+                            WHERE h.attraction_id = e.attraction_id
+                              AND h.day_of_week = EXTRACT(DOW FROM d)::int
+                              AND h.opens_at <= e.daily_start_time AND h.closes_at >= e.daily_end_time))
+                    THEN 'OUTSIDE_OPERATING_HOURS'
+                    ELSE 'OK' END AS schedule_check
+        FROM tourism.events e
+        JOIN tourism.attractions a USING (attraction_id)
+        WHERE daterange(e.start_date, e.end_date, '[]') && daterange(%(from_date)s::date, %(to_date)s::date, '[]')
+        ORDER BY e.start_date, e.event_id
+        """,
+        (Param("from_date", "From date (YYYY-MM-DD)", "date", "2026-09-01"),
+         Param("to_date", "To date (YYYY-MM-DD)", "date", "2026-10-31")),
+    ),
+    Scenario(
+        "DB3-3", "tourism", "Official statistics vs. synthetic samples",
+        "Monthly totals and hourly samples live in separate tables; this compares them for one month.",
+        "ready",
+        """
+        SELECT a.attraction_name_ko, o.year_month, o.visitor_count AS monthly_total,
+               r.provenance AS monthly_total_provenance,
+               s.sample_total, s.sample_hours,
+               ROUND(100.0 * s.sample_total / NULLIF(o.visitor_count, 0), 1)::float8 AS sample_coverage_pct
+        FROM tourism.aggregate_visits o
+        JOIN tourism.attractions a USING (attraction_id)
+        JOIN core.source_registry r ON r.source_id = o.source_id
+        LEFT JOIN LATERAL (
+            SELECT SUM(v.visitor_count) AS sample_total, COUNT(*) AS sample_hours
+            FROM tourism.sample_visits v
+            WHERE v.attraction_id = o.attraction_id
+              AND v.hour_start >= o.year_month::timestamp AT TIME ZONE 'Asia/Seoul'
+              AND v.hour_start <  (o.year_month + INTERVAL '1 month') AT TIME ZONE 'Asia/Seoul'
+        ) s ON TRUE
+        WHERE o.year_month = date_trunc('month', %(month)s::date)::date
+        ORDER BY o.visitor_count DESC
+        """,
+        (Param("month", "Month (any date in it, YYYY-MM-DD)", "date", "2026-09-01"),),
+    ),
+    Scenario(
+        "DB3-4", "tourism", "Open attractions near transit",
+        "Attractions within a radius of a bus stop that are open on the given weekday and time.",
+        "ready",
+        """
+        SELECT a.attraction_id, a.attraction_name_ko, a.category,
+               TO_CHAR(h.opens_at, 'HH24:MI') AS opens_at, TO_CHAR(h.closes_at, 'HH24:MI') AS closes_at,
+               a.is_wheelchair_accessible, a.has_parking,
+               ROUND(ST_Distance(a.geom::geography, st.geom::geography)::numeric, 1)::float8 AS distance_m,
+               st.stop_name_ko AS from_stop
+        FROM mobility.stops st
+        JOIN tourism.attractions a
+          ON ST_DWithin(a.geom::geography, st.geom::geography, %(radius_m)s)
+        JOIN tourism.operating_hours h
+          ON h.attraction_id = a.attraction_id
+         AND h.day_of_week = %(day_of_week)s
+         AND h.opens_at <= %(at_time)s::time AND h.closes_at > %(at_time)s::time
+        WHERE st.stop_number = %(stop_number)s
+        ORDER BY distance_m
+        """,
+        (Param("stop_number", "Stop number (on the stop sign)", "str", "38367"),
+         Param("radius_m", "Radius (m)", "float", 1500, 1, 20000),
+         Param("day_of_week", "Day of week (0 = Sun ... 6 = Sat)", "int", 5, 0, 6),
+         Param("at_time", "Time (HH:MM)", "time", "14:00")),
+    ),
+    Scenario(
+        "DB3-5", "tourism", "Temporal demand & crowd forecasting",
+        "Expected event attendance against the bus seats arriving nearby before the event starts.",
+        "ready",
+        """
+        WITH active AS (
+            SELECT e.event_id, e.event_name_ko, e.daily_start_time, e.expected_attendance,
+                   a.attraction_name_ko, a.geom,
+                   (%(event_date)s::date + e.daily_start_time) AT TIME ZONE 'Asia/Seoul' AS starts_at
+            FROM tourism.events e
+            JOIN tourism.attractions a USING (attraction_id)
+            WHERE NOT e.is_cancelled
+              AND %(event_date)s::date BETWEEN e.start_date AND e.end_date
+        )
+        SELECT ev.event_id, ev.event_name_ko, ev.attraction_name_ko AS venue, ev.daily_start_time,
+               ev.expected_attendance, cap.arriving_trips, cap.seat_capacity,
+               ROUND(ev.expected_attendance::numeric / NULLIF(cap.seat_capacity, 0), 1)::float8
+                   AS attendees_per_seat,
+               CASE WHEN cap.seat_capacity = 0 THEN 'NO_SERVICE'
+                    WHEN ev.expected_attendance > cap.seat_capacity THEN 'OVER_CAPACITY'
+                    ELSE 'OK' END AS transit_status
+        FROM active ev
+        CROSS JOIN LATERAL (
+            SELECT COUNT(*) AS arriving_trips, COALESCE(SUM(t.capacity), 0) AS seat_capacity
+            FROM (
+                SELECT DISTINCT tr.trip_id, v.capacity
+                FROM mobility.stops s
+                JOIN mobility.trip_stop_events te USING (stop_id)
+                JOIN mobility.trips tr USING (trip_id)
+                JOIN mobility.vehicles v USING (vehicle_id)
+                WHERE ST_DWithin(s.geom::geography, ev.geom::geography, %(radius_m)s)
+                  AND te.scheduled_arrival >  ev.starts_at - make_interval(mins => %(window_min)s)
+                  AND te.scheduled_arrival <= ev.starts_at
+                  AND tr.status <> 'CANCELLED'
+            ) t
+        ) cap
+        ORDER BY ev.expected_attendance DESC
+        """,
+        (Param("event_date", "Event date (YYYY-MM-DD)", "date", "2026-10-02"),
+         Param("radius_m", "Walking radius to stops (m)", "float", 500, 1, 5000),
+         Param("window_min", "Arrival window before start (min)", "int", 120, 1, 720)),
+    ),
     # ----------------------------------------------------------- environment
     Scenario("DB4-1", "environment", "Station registration & unit standards",
              "AirKorea Songdo and Dongchun stations with Korea MOE thresholds."),

@@ -14,7 +14,8 @@ project task.
 | Web console: pick a task, set parameters, run it, see rows + SQL + query plan | Done (shell) |
 | DB1 Mobility (`sql/02`): schema, real stop data, fixtures, 5 scenarios, `/api/v1/mobility/*` | Done |
 | DB2 Smart Building (`sql/03`): schema, fixtures, 5 scenarios, `/api/v1/building/*` | Done |
-| DB3–DB5 domain schemas and their 15 scenarios | Registered as *planned* |
+| DB3 Tourism (`sql/04`): schema, fixtures, 5 scenarios, `/api/v1/tourism/*` | Done |
+| DB4–DB5 domain schemas and their 10 scenarios | Registered as *planned* |
 | Cross-domain views, consumers, LaTeX handbook | Not started |
 
 ## Setup (native PostgreSQL, no Docker)
