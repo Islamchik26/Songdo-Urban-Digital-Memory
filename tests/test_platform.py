@@ -22,6 +22,7 @@ from adapters.core_adapter import PlacesAdapter  # noqa: E402
 from adapters.environment_adapter import (  # noqa: E402
     AirMeasurementsAdapter, AirStationsAdapter, explode_airkorea_item, parse_airkorea_time)
 from adapters.mobility_adapter import StopsAdapter, VehicleObservationAdapter  # noqa: E402
+from adapters.safety_adapter import IncidentsAdapter, IncidentTransitionsAdapter  # noqa: E402
 from adapters.tourism_adapter import AttractionsAdapter, VisitSamplesAdapter  # noqa: E402
 from api.config import settings  # noqa: E402
 from api.main import app  # noqa: E402
@@ -268,6 +269,54 @@ class ApiValidationTests(unittest.TestCase):
         songdo = [a for a in alerts if a["station_name_ko"] == "송도" and a["severity"] == "VERY_BAD"]
         self.assertEqual(len(songdo), 1)                      # one episode, not one alert per hour
         self.assertGreater(songdo[0]["peak_value"], 75)
+
+    @needs_db
+    def test_incident_state_at_time_t(self):
+        def active(as_of):
+            rows = self.client.get("/api/v1/safety/incidents/active", params={"as_of": as_of}).json()
+            return {r["incident_id"][-4:]: r["status"] for r in rows if r["incident_id"].startswith("INC-20261002-")}
+        self.assertEqual(active("2026-10-02T08:10:00+09:00"), {"0001": "DISPATCHED"})
+        self.assertEqual(active("2026-10-02T08:20:00+09:00"), {"0001": "ON_SCENE"})
+        self.assertEqual(active("2026-10-02T11:00:00+09:00"), {})                        # 0001 closed, nothing else yet
+        self.assertEqual(active("2026-10-02T18:30:00+09:00"), {"0003": "ON_SCENE", "0004": "REPORTED"})
+        self.assertEqual(active("2026-10-02T23:00:00+09:00"),
+                         {"0003": "ON_SCENE", "0004": "REPORTED", "0005": "DISPATCHED"})
+
+        detail = self.client.get("/api/v1/safety/incidents/INC-20261002-0001").json()
+        self.assertEqual([h["to_status"] for h in detail["history"]],
+                         ["REPORTED", "DISPATCHED", "ON_SCENE", "RESOLVED", "CLOSED"])
+        self.assertEqual(self.client.get("/api/v1/safety/incidents/NOPE").status_code, 404)
+
+    @needs_db
+    def test_hazard_zones_geojson(self):
+        t = "2026-10-02T18:30:00+09:00"
+        zones = self.client.get("/api/v1/safety/hazard-zones", params={"as_of": t}).json()
+        self.assertEqual(zones["type"], "FeatureCollection")
+        by_id = {f["properties"]["incident_id"]: f for f in zones["features"]}
+        self.assertEqual(set(by_id), {"INC-20261002-0003", "INC-20261002-0004"})
+        fire = by_id["INC-20261002-0003"]
+        self.assertEqual(fire["geometry"]["type"], "Polygon")
+        # a point 100 m from the fire is blocked; a point across town is not
+        inside = self.client.get("/api/v1/safety/hazard-zones", params={
+            "as_of": t, "lon": fire["properties"]["lon"] + 0.001, "lat": fire["properties"]["lat"]}).json()
+        self.assertEqual(inside["point"]["blocked_by"], ["INC-20261002-0003"])
+        outside = self.client.get("/api/v1/safety/hazard-zones",
+                                  params={"as_of": t, "lon": 126.6328, "lat": 37.3751}).json()
+        self.assertEqual(outside["point"]["blocked_by"], [])
+        self.assertEqual(self.client.get("/api/v1/safety/hazard-zones", params={"lon": 126.64}).status_code, 422)
+
+    def test_safety_write_endpoints_validate_input(self):
+        headers = {"X-API-Token": settings.ingest_api_token}
+        report = {"incident_id": "INC-X", "type_code": "FIRE", "title": "t", "severity": "HIGH",
+                  "lon": 126.64, "lat": 37.39, "reported_at": "2026-10-03T09:00:00+09:00"}
+        self.assertEqual(self.client.post("/api/v1/safety/incidents", json=report).status_code, 401)
+        for bad in ({**report, "severity": "URGENT"}, {**report, "type_code": "ALIENS"},
+                    {**report, "reported_at": "2026-10-03 09:00"}):
+            r = self.client.post("/api/v1/safety/incidents", json=bad, headers=headers)
+            self.assertEqual(r.status_code, 422, bad)
+        r = self.client.post("/api/v1/safety/incidents/INC-X/transition", json={"to_status": "REPORTED"},
+                             headers=headers)
+        self.assertEqual(r.status_code, 422)
 
 
 @needs_db
@@ -640,6 +689,119 @@ class EnvironmentDatabaseTests(unittest.TestCase):
             self.assertEqual((stations.loaded, stations.quarantined), (0, 0))
             self.assertEqual(result.loaded + result.quarantined + result.duplicates, len(records))
             self.assertLessEqual(result.quarantined, faults)
+
+@needs_db
+class SafetyDatabaseTests(unittest.TestCase):
+    def setUp(self):
+        self.conn = psycopg.connect(settings.conninfo())
+        self.conn.execute("SELECT 1")  # open the transaction; everything below is rolled back
+
+    def tearDown(self):
+        self.conn.rollback()
+        self.conn.close()
+
+    REPORT = {"incident_id": "INC-TEST-1", "type_code": "TRAFFIC_ACCIDENT", "title": "테스트 사고",
+              "severity": "HIGH", "lon": 126.6445, "lat": 37.3885, "reported_at": "2026-10-03T09:00:00+09:00"}
+
+    def _step(self, to_status, at, facility=None):
+        self.conn.execute("SELECT safety.transition_incident(%s, %s, %s, 'TEST', %s)",
+                          ("INC-TEST-1", to_status, at, facility))
+
+    def test_seeded_history_is_consistent(self):
+        # every incident's current status equals the last row of its history
+        mismatches = self.conn.execute(
+            """SELECT count(*) FROM safety.incidents i
+               JOIN LATERAL (SELECT to_status FROM safety.incident_status_history h
+                             WHERE h.incident_id = i.incident_id
+                             ORDER BY changed_at DESC, history_id DESC LIMIT 1) last ON TRUE
+               WHERE last.to_status <> i.current_status""").fetchone()[0]
+        self.assertEqual(mismatches, 0)
+        total, with_history = self.conn.execute(
+            """SELECT (SELECT count(*) FROM safety.incidents),
+                      (SELECT count(DISTINCT incident_id) FROM safety.incident_status_history)""").fetchone()
+        self.assertEqual(total, with_history)
+        self.assertGreaterEqual(total, 1000)
+
+    def test_full_lifecycle_through_the_state_machine(self):
+        summary = IncidentsAdapter(self.conn, actor="TEST").ingest([
+            self.REPORT,
+            {**self.REPORT, "incident_id": "INC-TEST-FAR", "lon": 126.978, "lat": 37.5665},      # outside Songdo
+            {**self.REPORT, "incident_id": "INC-TEST-SEV", "severity": "URGENT"},
+        ])
+        self.assertEqual((summary.loaded, summary.quarantined), (1, 2))
+        radius, status = self.conn.execute(
+            "SELECT restriction_radius_m, current_status FROM safety.incidents WHERE incident_id = 'INC-TEST-1'"
+        ).fetchone()
+        self.assertEqual((radius, status), (150, "REPORTED"))      # radius comes from the incident type
+
+        self._step("DISPATCHED", "2026-10-03T09:02:00+09:00", "FAC_POLICE_SONGDO1")
+        self._step("ON_SCENE", "2026-10-03T09:09:00+09:00")
+        self._step("RESOLVED", "2026-10-03T09:40:00+09:00")
+        self._step("CLOSED", "2026-10-03T10:00:00+09:00")
+        history = self.conn.execute(
+            """SELECT from_status, to_status, actor, facility_id FROM safety.incident_status_history
+               WHERE incident_id = 'INC-TEST-1' ORDER BY changed_at""").fetchall()
+        self.assertEqual(history, [
+            (None, "REPORTED", "SYSTEM", None),
+            ("REPORTED", "DISPATCHED", "TEST", "FAC_POLICE_SONGDO1"),
+            ("DISPATCHED", "ON_SCENE", "TEST", None),
+            ("ON_SCENE", "RESOLVED", "TEST", None),
+            ("RESOLVED", "CLOSED", "TEST", None)])
+        actions = [r[0] for r in self.conn.execute(
+            """SELECT action FROM core.event_audit_log
+               WHERE domain_schema = 'safety' AND entity_id = 'INC-TEST-1' AND actor = 'TEST'
+               ORDER BY audit_id""")]
+        self.assertEqual(actions, ["INSERT", "DISPATCH", "STATUS_CHANGE", "STATUS_CHANGE", "STATUS_CHANGE"])
+
+    def test_illegal_transitions_are_rejected(self):
+        IncidentsAdapter(self.conn, actor="TEST").ingest([self.REPORT])
+
+        def rejected(sql, params=()):
+            with self.assertRaises(psycopg.errors.CheckViolation):
+                with self.conn.transaction():
+                    self.conn.execute(sql, params)
+
+        call = "SELECT safety.transition_incident('INC-TEST-1', %s, %s, 'TEST', %s)"
+        rejected(call, ("RESOLVED", "2026-10-03T09:05:00+09:00", None))                 # skips two states
+        rejected(call, ("DISPATCHED", "2026-10-03T09:05:00+09:00", None))               # no facility given
+        rejected(call, ("DISPATCHED", "2026-10-03T08:00:00+09:00", "FAC_POLICE_SONGDO1"))  # before the report
+        # bypassing the function with a plain UPDATE is stopped by the trigger
+        rejected("UPDATE safety.incidents SET current_status = 'CLOSED' WHERE incident_id = 'INC-TEST-1'")
+        # and the history itself cannot be rewritten
+        with self.assertRaises(psycopg.errors.RestrictViolation):
+            with self.conn.transaction():
+                self.conn.execute("DELETE FROM safety.incident_status_history WHERE incident_id = 'INC-TEST-1'")
+        self.assertEqual(self.conn.execute(
+            "SELECT current_status FROM safety.incidents WHERE incident_id = 'INC-TEST-1'").fetchone()[0], "REPORTED")
+        with self.assertRaises(psycopg.errors.NoDataFound):
+            with self.conn.transaction():
+                self.conn.execute(call.replace("INC-TEST-1", "INC-NOPE"), ("DISPATCHED", None, "FAC_POLICE_SONGDO1"))
+
+    def test_transition_stream_adapter_quarantines_bad_steps(self):
+        IncidentsAdapter(self.conn, actor="TEST").ingest([self.REPORT])
+        step = {"incident_id": "INC-TEST-1", "to_status": "DISPATCHED", "changed_at": "2026-10-03T09:02:00+09:00",
+                "facility_id": "FAC_POLICE_SONGDO1"}
+        summary = IncidentTransitionsAdapter(self.conn, actor="TEST").ingest([
+            step,
+            {**step, "to_status": "CLOSED", "changed_at": "2026-10-03T09:03:00+09:00"},     # not allowed yet
+            {**step, "to_status": "ON_SCENE", "changed_at": "2026-10-03T09:10:00+09:00"},
+            {**step, "incident_id": "INC-NOPE"},
+        ])
+        self.assertEqual((summary.loaded, summary.quarantined), (2, 2))
+        self.assertEqual(self.conn.execute(
+            "SELECT current_status FROM safety.incidents WHERE incident_id = 'INC-TEST-1'").fetchone()[0], "ON_SCENE")
+
+    def test_drills_are_scored_by_the_database(self):
+        wrong = self.conn.execute(
+            "SELECT count(*) FROM safety.response_drills WHERE passed <> (response_seconds <= target_seconds)"
+        ).fetchone()[0]
+        self.assertEqual(wrong, 0)
+        passed, failed = self.conn.execute(
+            "SELECT count(*) FILTER (WHERE passed), count(*) FILTER (WHERE NOT passed) FROM safety.response_drills"
+        ).fetchone()
+        self.assertGreater(passed, 0)
+        self.assertGreater(failed, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

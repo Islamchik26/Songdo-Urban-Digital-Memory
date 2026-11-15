@@ -674,16 +674,180 @@ _SCENARIOS: list[Scenario] = [
         (LON, LAT, Param("as_of", "As of time (ISO, with offset)", "datetime", "2026-10-02T14:30:00+09:00")),
     ),
     # ---------------------------------------------------------------- safety
-    Scenario("DB5-1", "safety", "Public safety facilities registration",
-             "Songdo Fire Station, Sinsong 119 Safety Center and police boxes."),
-    Scenario("DB5-2", "safety", "Incident creation & severity triage",
-             "Emergency reports with coordinates and SLA targets."),
-    Scenario("DB5-3", "safety", "State machine transitions & drills",
-             "REPORTED → DISPATCHED → ON_SCENE → RESOLVED with full audit history."),
-    Scenario("DB5-4", "safety", "Response time analytics & hotspots",
-             "Response duration by station and spatial incident clusters."),
-    Scenario("DB5-5", "safety", "Smart Mobility hazard avoidance",
-             "Active incident restriction zones for autonomous path planners."),
+    Scenario(
+        "DB5-1", "safety", "Public safety facilities registration",
+        "Fire stations, 119 centers and police boxes, with their workload and the nearest bus stop.",
+        "ready",
+        """
+        SELECT f.facility_id, f.facility_name_ko, f.facility_type, f.responder,
+               ST_X(f.geom) AS lon, ST_Y(f.geom) AS lat,
+               (SELECT COUNT(*) FROM safety.incidents i
+                WHERE i.assigned_facility_id = f.facility_id AND NOT i.is_drill) AS incidents_handled,
+               (SELECT COUNT(*) FROM safety.response_drills d WHERE d.facility_id = f.facility_id) AS drills_held,
+               n.stop_name_ko AS nearest_stop, n.distance_m AS stop_distance_m,
+               r.provenance AS location_provenance
+        FROM safety.facilities f
+        JOIN core.source_registry r ON r.source_id = f.source_id
+        LEFT JOIN LATERAL (
+            SELECT s.stop_name_ko,
+                   ROUND(ST_Distance(f.geom::geography, s.geom::geography)::numeric, 1)::float8 AS distance_m
+            FROM mobility.stops s
+            ORDER BY f.geom <-> s.geom
+            LIMIT 1
+        ) n ON TRUE
+        WHERE %(responder)s = '' OR f.responder = %(responder)s
+        ORDER BY f.facility_type, f.facility_name_ko
+        """,
+        (Param("responder", "Responder (FIRE, POLICE or empty for all)", "str", ""),),
+    ),
+    Scenario(
+        "DB5-2", "safety", "Incident creation & severity triage",
+        "Incidents in a time window, most urgent first, with the SLA target and the distance to the assigned unit.",
+        "ready",
+        """
+        SELECT i.incident_id, i.title, t.name_ko AS incident_type, i.severity,
+               sl.sla_target_seconds, i.current_status, i.reported_at,
+               f.facility_name_ko AS assigned_facility,
+               ROUND(ST_Distance(i.geom::geography, f.geom::geography)::numeric)::int AS facility_distance_m,
+               ST_X(i.geom) AS lon, ST_Y(i.geom) AS lat, i.restriction_radius_m
+        FROM safety.incidents i
+        JOIN safety.incident_types t USING (type_code)
+        JOIN safety.severity_levels sl USING (severity)
+        LEFT JOIN safety.facilities f ON f.facility_id = i.assigned_facility_id
+        WHERE i.reported_at >= %(from_time)s::timestamptz AND i.reported_at < %(to_time)s::timestamptz
+          AND NOT i.is_drill
+        ORDER BY sl.severity_rank, i.reported_at
+        LIMIT %(limit)s
+        """,
+        (Param("from_time", "From (ISO, with offset)", "datetime", "2026-10-02T00:00:00+09:00"),
+         Param("to_time", "To (ISO, with offset)", "datetime", "2026-10-03T00:00:00+09:00"),
+         LIMIT),
+    ),
+    Scenario(
+        "DB5-3", "safety", "State machine transitions & drills",
+        "Full status history of one incident, time spent in each state, and what it may do next.",
+        "ready",
+        """
+        SELECT h.from_status, h.to_status, h.changed_at,
+               EXTRACT(EPOCH FROM h.changed_at - LAG(h.changed_at) OVER w)::int AS seconds_in_previous_state,
+               EXTRACT(EPOCH FROM h.changed_at - FIRST_VALUE(h.changed_at) OVER w)::int AS seconds_since_report,
+               h.actor, f.facility_name_ko AS dispatched_facility,
+               CASE WHEN LEAD(h.to_status) OVER w IS NULL THEN (
+                   SELECT COALESCE(STRING_AGG(nxt, ', ' ORDER BY nxt), '(final state)')
+                   FROM UNNEST(ARRAY['DISPATCHED', 'ON_SCENE', 'RESOLVED', 'CLOSED', 'CANCELLED']) AS nxt
+                   WHERE safety.valid_incident_transition(h.to_status, nxt)) END AS allowed_next
+        FROM safety.incident_status_history h
+        LEFT JOIN safety.facilities f ON f.facility_id = h.facility_id
+        WHERE h.incident_id = %(incident_id)s
+        WINDOW w AS (ORDER BY h.changed_at, h.history_id)
+        ORDER BY h.changed_at, h.history_id
+        """,
+        (Param("incident_id", "Incident ID", "str", "INC-20261002-0001"),),
+    ),
+    Scenario(
+        "DB5-4", "safety", "Response time analytics by facility",
+        "Report-to-arrival time per facility: average, median, 90th percentile and SLA compliance.",
+        "ready",
+        """
+        SELECT f.facility_name_ko, f.facility_type, COUNT(*) AS incidents,
+               ROUND(AVG(r.response_s))::int AS avg_response_s,
+               ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY r.response_s))::int AS median_response_s,
+               ROUND(PERCENTILE_CONT(0.9) WITHIN GROUP (ORDER BY r.response_s))::int AS p90_response_s,
+               ROUND(100.0 * COUNT(*) FILTER (WHERE r.response_s <= r.sla_s) / COUNT(*), 1)::float8 AS sla_met_pct,
+               RANK() OVER (ORDER BY AVG(r.response_s)) AS speed_rank
+        FROM (
+            SELECT i.assigned_facility_id, sl.sla_target_seconds AS sla_s,
+                   EXTRACT(EPOCH FROM h.changed_at - i.reported_at)::int AS response_s
+            FROM safety.incidents i
+            JOIN safety.incident_status_history h ON h.incident_id = i.incident_id AND h.to_status = 'ON_SCENE'
+            JOIN safety.severity_levels sl USING (severity)
+            WHERE i.reported_at >= %(from_date)s::date::timestamp AT TIME ZONE 'Asia/Seoul'
+              AND i.reported_at <  (%(to_date)s::date + 1)::timestamp AT TIME ZONE 'Asia/Seoul'
+              AND (%(include_drills)s = 1 OR NOT i.is_drill)
+        ) r
+        JOIN safety.facilities f ON f.facility_id = r.assigned_facility_id
+        GROUP BY f.facility_id
+        ORDER BY speed_rank
+        """,
+        (Param("from_date", "From date (YYYY-MM-DD)", "date", "2026-07-01"),
+         Param("to_date", "To date (YYYY-MM-DD)", "date", "2026-10-02"),
+         Param("include_drills", "Include drills (0 or 1)", "int", 0, 0, 1)),
+    ),
+    Scenario(
+        "DB5-4B", "safety", "Incident hotspots (spatial clusters)",
+        "DBSCAN clustering of incident locations in metres; each cluster with its size, centre and nearest place.",
+        "ready",
+        """
+        WITH clustered AS (
+            SELECT i.type_code, i.geom,
+                   ST_ClusterDBSCAN(ST_Transform(i.geom, 5186), eps := %(eps_m)s, minpoints := %(min_points)s)
+                       OVER () AS cluster_id
+            FROM safety.incidents i
+            WHERE i.reported_at >= %(from_date)s::date::timestamp AT TIME ZONE 'Asia/Seoul'
+              AND i.reported_at <  (%(to_date)s::date + 1)::timestamp AT TIME ZONE 'Asia/Seoul'
+              AND NOT i.is_drill
+        ), hotspots AS (
+            SELECT cluster_id, COUNT(*) AS incidents,
+                   MODE() WITHIN GROUP (ORDER BY type_code) AS most_common_type,
+                   ST_Centroid(ST_Collect(geom)) AS centre
+            FROM clustered
+            WHERE cluster_id IS NOT NULL
+            GROUP BY cluster_id
+        )
+        SELECT RANK() OVER (ORDER BY h.incidents DESC) AS hotspot_rank, h.incidents, h.most_common_type,
+               ROUND(ST_X(h.centre)::numeric, 6)::float8 AS lon, ROUND(ST_Y(h.centre)::numeric, 6)::float8 AS lat,
+               n.name_ko AS nearest_place, n.distance_m AS place_distance_m
+        FROM hotspots h
+        LEFT JOIN LATERAL (
+            SELECT p.name_ko,
+                   ROUND(ST_Distance(h.centre::geography, p.geom::geography)::numeric)::int AS distance_m
+            FROM core.places p
+            ORDER BY h.centre <-> p.geom
+            LIMIT 1
+        ) n ON TRUE
+        ORDER BY h.incidents DESC
+        LIMIT %(limit)s
+        """,
+        (Param("from_date", "From date (YYYY-MM-DD)", "date", "2026-07-01"),
+         Param("to_date", "To date (YYYY-MM-DD)", "date", "2026-10-02"),
+         Param("eps_m", "Neighbour distance (m)", "float", 40, 1, 1000),
+         Param("min_points", "Min incidents per cluster", "int", 40, 2, 10000),
+         LIMIT),
+    ),
+    Scenario(
+        "DB5-5", "safety", "Smart Mobility hazard avoidance",
+        "Restriction zones of the incidents active at time T, with the bus stops and vehicles inside each zone.",
+        "ready",
+        """
+        SELECT i.incident_id, i.title, t.name_ko AS incident_type, i.severity, st.status AS status_at_t,
+               ST_X(i.geom) AS lon, ST_Y(i.geom) AS lat, i.restriction_radius_m,
+               (SELECT COUNT(*) FROM mobility.stops s
+                WHERE ST_DWithin(s.geom::geography, i.geom::geography, i.restriction_radius_m)) AS stops_in_zone,
+               (SELECT COUNT(*) FROM (
+                    SELECT DISTINCT ON (o.vehicle_id) o.geom, o.observed_at
+                    FROM mobility.vehicle_observations o
+                    WHERE o.observed_at <= %(as_of)s::timestamptz
+                      AND o.observed_at >  %(as_of)s::timestamptz - INTERVAL '2 minutes'
+                    ORDER BY o.vehicle_id, o.observed_at DESC) v
+                WHERE ST_DWithin(v.geom::geography, i.geom::geography, i.restriction_radius_m)) AS vehicles_in_zone,
+               ST_AsGeoJSON(ST_Buffer(i.geom::geography, i.restriction_radius_m, 8)::geometry, 5) AS zone_geojson
+        FROM safety.incidents i
+        JOIN safety.incident_types t USING (type_code)
+        JOIN LATERAL (
+            SELECT h.to_status AS status
+            FROM safety.incident_status_history h
+            WHERE h.incident_id = i.incident_id AND h.changed_at <= %(as_of)s::timestamptz
+            ORDER BY h.changed_at DESC, h.history_id DESC
+            LIMIT 1
+        ) st ON TRUE
+        WHERE i.reported_at <= %(as_of)s::timestamptz
+          AND i.reported_at >  %(as_of)s::timestamptz - INTERVAL '7 days'
+          AND NOT i.is_drill AND i.restriction_radius_m > 0
+          AND st.status IN ('REPORTED', 'DISPATCHED', 'ON_SCENE')
+        ORDER BY i.reported_at
+        """,
+        (Param("as_of", "As of time (ISO, with offset)", "datetime", "2026-10-02T18:30:00+09:00"),),
+    ),
 ]
 
 SCENARIOS: dict[str, Scenario] = {s.id: s for s in _SCENARIOS}

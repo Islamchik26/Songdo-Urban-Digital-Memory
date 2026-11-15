@@ -16,7 +16,7 @@ project task.
 | DB2 Smart Building (`sql/03`): schema, fixtures, 5 scenarios, `/api/v1/building/*` | Done |
 | DB3 Tourism (`sql/04`): schema, fixtures, 5 scenarios, `/api/v1/tourism/*` | Done |
 | DB4 Environment (`sql/05`): schema, real AirKorea stations, fixtures, 5 scenarios, `/api/v1/environment/*` | Done |
-| DB5 domain schema and its 5 scenarios | Registered as *planned* |
+| DB5 Safety & Incident (`sql/06`): schema, state machine, fixtures, 6 scenarios, `/api/v1/safety/*` | Done |
 | Cross-domain views, consumers, LaTeX handbook | Not started |
 
 ## Setup (native PostgreSQL, no Docker)
