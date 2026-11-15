@@ -83,6 +83,7 @@ RADIUS = Param("radius_m", "Radius (m)", "float", 1000, 1, 20000)
 LIMIT = Param("limit", "Max rows", "int", 50, 1, 500)
 ROUTE = Param("route_number", "Route number (8, SD-A, AV-1)", "str", "8")
 DIRECTION = Param("direction", "Direction (0 or 1)", "int", 0, 0, 1)
+STATION = Param("station", "Station name (송도, 아암, 동막, 동춘, 인천 신항)", "str", "송도")
 BUILDING = Param("building_id", "Building ID (e.g. BLD_G_TOWER, BLD_POSCO_TOWER)", "str", "BLD_G_TOWER")
 AS_OF_BLD = Param("as_of", "As of time (ISO, with offset)", "datetime", "2026-10-02T10:00:00+09:00")
 
@@ -524,16 +525,154 @@ _SCENARIOS: list[Scenario] = [
          Param("window_min", "Arrival window before start (min)", "int", 120, 1, 720)),
     ),
     # ----------------------------------------------------------- environment
-    Scenario("DB4-1", "environment", "Station registration & unit standards",
-             "AirKorea Songdo and Dongchun stations with Korea MOE thresholds."),
-    Scenario("DB4-2", "environment", "Telemetry ingestion & quality flags",
-             "PM10, PM2.5, O3, NO2, CO, SO2 with sensor validation."),
-    Scenario("DB4-3", "environment", "Fault handling & late arrivals",
-             "Rejects '-' fault readings; late packets handled by upsert."),
-    Scenario("DB4-4", "environment", "Hourly rollup & threshold alerts",
-             "Hourly statistics; alert when PM2.5 exceeds 75 µg/m³."),
-    Scenario("DB4-5", "environment", "Contextual air exposure service",
-             "Nearest-station reading with distance and measurement age."),
+    Scenario(
+        "DB4-1", "environment", "Station registration & unit standards",
+        "Registered stations, then every pollutant with its unit and alert thresholds per station.",
+        "ready",
+        """
+        SELECT s.station_name_ko, s.network, s.established_year,
+               ST_X(s.geom) AS lon, ST_Y(s.geom) AS lat,
+               t.type_code, t.unit,
+               b.threshold_value::float8  AS bad_above,
+               vb.threshold_value::float8 AS very_bad_above,
+               r.provenance AS station_provenance
+        FROM environment.stations s
+        JOIN core.source_registry r ON r.source_id = s.source_id
+        CROSS JOIN environment.measurement_types t
+        LEFT JOIN environment.alert_rules b  ON b.type_code  = t.type_code AND b.severity  = 'BAD'
+        LEFT JOIN environment.alert_rules vb ON vb.type_code = t.type_code AND vb.severity = 'VERY_BAD'
+        WHERE %(station)s = '' OR s.station_name_ko = %(station)s
+        ORDER BY s.station_name_ko, t.type_code
+        """,
+        (Param("station", "Station name (송도, 아암, 동막, 동춘, 인천 신항)", "str", "송도"),),
+    ),
+    Scenario(
+        "DB4-2", "environment", "Telemetry ingestion & quality flags",
+        "Latest reading per pollutant at a station as of time T, with quality flag and grade.",
+        "ready",
+        """
+        SELECT l.type_code, l.measured_value::float8 AS value, t.unit, l.quality_flag, l.observed_at,
+               l.source_id,
+               ROUND(EXTRACT(EPOCH FROM (%(as_of)s::timestamptz - l.observed_at)) / 60)::int AS age_minutes,
+               CASE WHEN l.quality_flag <> 'GOOD' THEN 'NOT_GRADED'
+                    WHEN l.measured_value > vb.threshold_value THEN 'VERY_BAD'
+                    WHEN l.measured_value > b.threshold_value  THEN 'BAD'
+                    ELSE 'NORMAL' END AS grade
+        FROM (
+            SELECT DISTINCT ON (m.type_code) m.type_code, m.measured_value, m.quality_flag, m.observed_at, m.source_id
+            FROM environment.measurements m
+            JOIN environment.stations s USING (station_id)
+            WHERE s.station_name_ko = %(station)s AND m.observed_at <= %(as_of)s::timestamptz
+            ORDER BY m.type_code, m.observed_at DESC
+        ) l
+        JOIN environment.measurement_types t USING (type_code)
+        LEFT JOIN environment.alert_rules b  ON b.type_code  = l.type_code AND b.severity  = 'BAD'
+        LEFT JOIN environment.alert_rules vb ON vb.type_code = l.type_code AND vb.severity = 'VERY_BAD'
+        ORDER BY l.type_code
+        """,
+        (STATION, Param("as_of", "As of time (ISO, with offset)", "datetime", "2026-10-02T14:30:00+09:00")),
+    ),
+    Scenario(
+        "DB4-3", "environment", "Fault handling & late arrivals",
+        "Per station and pollutant: readings stored, late packets, suspect values, quarantined faults, corrections.",
+        "ready",
+        """
+        SELECT s.station_name_ko, t.type_code,
+               COUNT(m.measurement_id) AS readings,
+               COUNT(*) FILTER (WHERE m.received_at - m.observed_at > make_interval(mins => %(late_minutes)s))
+                   AS late_arrivals,
+               COUNT(*) FILTER (WHERE m.quality_flag = 'SUSPECT') AS suspect_values,
+               (SELECT COUNT(*) FROM core.quarantine_records q
+                WHERE q.domain_schema = 'environment' AND q.target_table = 'measurements'
+                  AND q.reason_code = 'FAULT_READING'
+                  AND q.payload->>'station_name' = s.station_name_ko
+                  AND q.payload->>'type_code' = t.type_code) AS faults_quarantined,
+               (SELECT COUNT(*) FROM core.event_audit_log a
+                WHERE a.domain_schema = 'environment' AND a.table_name = 'measurements' AND a.action = 'UPDATE'
+                  AND a.payload_snapshot->>'station_name' = s.station_name_ko
+                  AND a.payload_snapshot->>'type_code' = t.type_code) AS corrections_applied
+        FROM environment.stations s
+        CROSS JOIN environment.measurement_types t
+        LEFT JOIN environment.measurements m
+          ON m.station_id = s.station_id AND m.type_code = t.type_code
+         AND m.observed_at >= %(from_time)s::timestamptz AND m.observed_at < %(to_time)s::timestamptz
+        GROUP BY s.station_name_ko, t.type_code
+        HAVING %(only_problems)s = 0
+            OR COUNT(*) FILTER (WHERE m.received_at - m.observed_at > make_interval(mins => %(late_minutes)s)) > 0
+            OR COUNT(*) FILTER (WHERE m.quality_flag = 'SUSPECT') > 0
+            OR EXISTS (SELECT 1 FROM core.quarantine_records q
+                       WHERE q.domain_schema = 'environment' AND q.reason_code = 'FAULT_READING'
+                         AND q.payload->>'station_name' = s.station_name_ko
+                         AND q.payload->>'type_code' = t.type_code)
+        ORDER BY s.station_name_ko, t.type_code
+        """,
+        (Param("from_time", "From (ISO, with offset)", "datetime", "2026-10-02T00:00:00+09:00"),
+         Param("to_time", "To (ISO, with offset)", "datetime", "2026-10-03T00:00:00+09:00"),
+         Param("late_minutes", "Late if received more than (min) after observed", "int", 60, 1, 10080),
+         Param("only_problems", "Only rows with a problem (0 or 1)", "int", 1, 0, 1)),
+    ),
+    Scenario(
+        "DB4-4", "environment", "Hourly rollup & threshold alerts",
+        "Hourly statistics of one pollutant at a station for a day, with the alert episode covering each hour.",
+        "ready",
+        """
+        SELECT h.hour_start, h.avg_value::float8 AS avg_value, h.min_value::float8 AS min_value,
+               h.max_value::float8 AS max_value, h.sample_count, t.unit,
+               a.severity AS alert_severity, a.status AS alert_status, a.resolved_at
+        FROM environment.hourly_summaries h
+        JOIN environment.stations s USING (station_id)
+        JOIN environment.measurement_types t USING (type_code)
+        LEFT JOIN LATERAL (
+            SELECT r.severity, al.status, al.resolved_at
+            FROM environment.alerts al
+            JOIN environment.alert_rules r USING (rule_id)
+            WHERE al.station_id = h.station_id AND al.type_code = h.type_code
+              AND h.hour_start BETWEEN al.started_hour AND al.last_exceeded_hour
+            ORDER BY r.threshold_value DESC
+            LIMIT 1
+        ) a ON TRUE
+        WHERE s.station_name_ko = %(station)s AND h.type_code = %(type_code)s
+          AND h.hour_start >= %(day)s::date::timestamp AT TIME ZONE 'Asia/Seoul'
+          AND h.hour_start <  (%(day)s::date + 1)::timestamp AT TIME ZONE 'Asia/Seoul'
+        ORDER BY h.hour_start
+        """,
+        (STATION,
+         Param("type_code", "Pollutant (PM10, PM25, O3, NO2, CO, SO2)", "str", "PM25"),
+         Param("day", "Day (YYYY-MM-DD)", "date", "2026-10-02")),
+    ),
+    Scenario(
+        "DB4-5", "environment", "Contextual air exposure service",
+        "Nearest station to a point, with distance and the age of each pollutant's latest good reading.",
+        "ready",
+        """
+        SELECT st.station_name_ko AS nearest_station, st.distance_m,
+               l.type_code, l.measured_value::float8 AS value, t.unit, l.observed_at,
+               ROUND(EXTRACT(EPOCH FROM (%(as_of)s::timestamptz - l.observed_at)) / 60)::int AS age_minutes,
+               CASE WHEN l.measured_value > vb.threshold_value THEN 'VERY_BAD'
+                    WHEN l.measured_value > b.threshold_value  THEN 'BAD'
+                    ELSE 'NORMAL' END AS grade
+        FROM (
+            SELECT s.station_id, s.station_name_ko,
+                   ROUND(ST_Distance(s.geom::geography,
+                         ST_SetSRID(ST_MakePoint(%(lon)s, %(lat)s), 4326)::geography)::numeric, 1)::float8 AS distance_m
+            FROM environment.stations s
+            ORDER BY s.geom::geography <-> ST_SetSRID(ST_MakePoint(%(lon)s, %(lat)s), 4326)::geography
+            LIMIT 1
+        ) st
+        CROSS JOIN LATERAL (
+            SELECT DISTINCT ON (m.type_code) m.type_code, m.measured_value, m.observed_at
+            FROM environment.measurements m
+            WHERE m.station_id = st.station_id AND m.quality_flag = 'GOOD'
+              AND m.observed_at <= %(as_of)s::timestamptz
+            ORDER BY m.type_code, m.observed_at DESC
+        ) l
+        JOIN environment.measurement_types t USING (type_code)
+        LEFT JOIN environment.alert_rules b  ON b.type_code  = l.type_code AND b.severity  = 'BAD'
+        LEFT JOIN environment.alert_rules vb ON vb.type_code = l.type_code AND vb.severity = 'VERY_BAD'
+        ORDER BY l.type_code
+        """,
+        (LON, LAT, Param("as_of", "As of time (ISO, with offset)", "datetime", "2026-10-02T14:30:00+09:00")),
+    ),
     # ---------------------------------------------------------------- safety
     Scenario("DB5-1", "safety", "Public safety facilities registration",
              "Songdo Fire Station, Sinsong 119 Safety Center and police boxes."),

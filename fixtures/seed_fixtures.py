@@ -28,6 +28,7 @@ sys.path.insert(0, str(ROOT))
 
 from fixtures.building_section import building_section  # noqa: E402
 from fixtures.common import BBOX, SERVICE_DAY, insert, point  # noqa: E402
+from fixtures.environment_section import environment_section  # noqa: E402
 from fixtures.tourism_section import tourism_section  # noqa: E402
 OUT = ROOT / "fixtures" / "seed_data.sql"
 SEED = 20261002
@@ -282,7 +283,8 @@ def main() -> None:
     lines += mobility_section(rng, n)
     lines += building_section(rng, n, PLACE_XY)
     lines += tourism_section(rng, PLACE_XY)
-    # Next domain sections (environment, safety) are appended here.
+    lines += environment_section(rng, n)
+    # Next domain section (safety) is appended here.
 
     OUT.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
     print(f"Wrote {OUT.relative_to(ROOT)} ({OUT.stat().st_size / 1024:.0f} kB, N={n})")

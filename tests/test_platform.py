@@ -6,6 +6,7 @@ they leave no rows behind.
 """
 from __future__ import annotations
 
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -18,6 +19,8 @@ from fastapi.testclient import TestClient  # noqa: E402
 from adapters.base_adapter import calculate_payload_hash, validate_coordinate  # noqa: E402
 from adapters.building_adapter import BuildingTelemetryAdapter  # noqa: E402
 from adapters.core_adapter import PlacesAdapter  # noqa: E402
+from adapters.environment_adapter import (  # noqa: E402
+    AirMeasurementsAdapter, AirStationsAdapter, explode_airkorea_item, parse_airkorea_time)
 from adapters.mobility_adapter import StopsAdapter, VehicleObservationAdapter  # noqa: E402
 from adapters.tourism_adapter import AttractionsAdapter, VisitSamplesAdapter  # noqa: E402
 from api.config import settings  # noqa: E402
@@ -63,6 +66,22 @@ class PayloadHashTests(unittest.TestCase):
         self.assertEqual(a, b)
         self.assertRegex(a, r"^[0-9a-f]{64}$")
         self.assertNotEqual(a, calculate_payload_hash({"vehicle": "V001", "name": "송도", "speed": 21}))
+
+
+class AirKoreaParsingTests(unittest.TestCase):
+    def test_midnight_is_written_as_24_00(self):
+        self.assertEqual(parse_airkorea_time("2026-11-14 24:00").isoformat(), "2026-11-15T00:00:00+09:00")
+        self.assertEqual(parse_airkorea_time("2026-11-15 18:00").isoformat(), "2026-11-15T18:00:00+09:00")
+        self.assertIsNone(parse_airkorea_time("yesterday"))
+        self.assertIsNone(parse_airkorea_time("2026-11-15T18:00:00"))       # ISO without offset is ambiguous
+
+    def test_one_api_row_becomes_six_readings(self):
+        item = {"dataTime": "2026-11-15 18:00", "pm10Value": "41", "pm25Value": "-", "pm25Flag": "통신장애",
+                "o3Value": "0.059", "no2Value": "0.013", "coValue": "0.5", "so2Value": "0.004"}
+        records = explode_airkorea_item(item, "송도")
+        self.assertEqual({r["type_code"] for r in records}, {"PM10", "PM25", "O3", "NO2", "CO", "SO2"})
+        pm25 = next(r for r in records if r["type_code"] == "PM25")
+        self.assertEqual((pm25["value"], pm25["flag"]), ("-", "통신장애"))
 
 
 class ScenarioRegistryTests(unittest.TestCase):
@@ -213,6 +232,42 @@ class ApiValidationTests(unittest.TestCase):
         self.assertEqual(r.status_code, 422)
         r = self.client.post("/api/v1/scenarios/DB3-4/run", json={"params": {"at_time": "25:99"}})
         self.assertEqual(r.status_code, 422)
+
+    @needs_db
+    def test_environment_read_endpoints(self):
+        stations = self.client.get("/api/v1/environment/stations").json()
+        self.assertEqual({s["station_name_ko"] for s in stations}, {"송도", "아암", "동막", "동춘", "인천 신항"})
+
+        def pm25(as_of):
+            body = self.client.get("/api/v1/environment/stations/송도/latest", params={"as_of": as_of}).json()
+            return next(r for r in body["readings"] if r["type_code"] == "PM25")
+        self.assertEqual(pm25("2026-10-02T09:00:00+09:00")["grade"], "NORMAL")
+        self.assertEqual(pm25("2026-10-02T14:30:00+09:00")["grade"], "VERY_BAD")     # inside the episode
+
+        exposure = self.client.get("/api/v1/environment/exposure",
+                                   params={"lon": 126.6548, "lat": 37.3821, "as_of": "2026-10-02T09:00:00+09:00"}).json()
+        self.assertEqual(exposure["nearest_station"]["station_name_ko"], "송도")
+        self.assertLess(exposure["nearest_station"]["distance_m"], 100)
+        self.assertEqual(len(exposure["readings"]), 6)
+
+        self.assertEqual(self.client.get("/api/v1/environment/stations/없는곳/latest").status_code, 404)
+        r = self.client.get("/api/v1/environment/stations/송도/measurements",
+                            params={"from": "2026-10-03T00:00:00+09:00", "to": "2026-10-02T00:00:00+09:00"})
+        self.assertEqual(r.status_code, 422)
+
+    @needs_db
+    def test_alert_episodes_from_seed(self):
+        alerts = self.client.get("/api/v1/environment/alerts").json()
+        very_bad = {(a["station_name_ko"], a["status"]) for a in alerts
+                    if a["type_code"] == "PM25" and a["severity"] == "VERY_BAD"
+                    and a["started_hour"].startswith("2026-10-02")}
+        # 송도's afternoon episode cleared; 아암's evening episode was still on at midnight.
+        # (아암 turns RESOLVED once later clean data is ingested, e.g. by scripts/ingest_airkorea.py.)
+        self.assertIn(("송도", "RESOLVED"), very_bad)
+        self.assertTrue({("아암", "ACTIVE"), ("아암", "RESOLVED")} & very_bad)
+        songdo = [a for a in alerts if a["station_name_ko"] == "송도" and a["severity"] == "VERY_BAD"]
+        self.assertEqual(len(songdo), 1)                      # one episode, not one alert per hour
+        self.assertGreater(songdo[0]["peak_value"], 75)
 
 
 @needs_db
@@ -475,6 +530,116 @@ class TourismDatabaseTests(unittest.TestCase):
             "SELECT reason_code FROM core.quarantine_records WHERE batch_id = %s", (summary.batch_id,)))
         self.assertEqual(reasons, ["FAULT_READING", "FK_VIOLATION", "SCHEMA_VIOLATION"])
 
+
+@needs_db
+class EnvironmentDatabaseTests(unittest.TestCase):
+    def setUp(self):
+        self.conn = psycopg.connect(settings.conninfo())
+        self.conn.execute("SELECT 1")  # open the transaction; everything below is rolled back
+
+    def tearDown(self):
+        self.conn.rollback()
+        self.conn.close()
+
+    def _reasons(self, batch_id):
+        return sorted(r[0] for r in self.conn.execute(
+            "SELECT reason_code FROM core.quarantine_records WHERE batch_id = %s", (batch_id,)))
+
+    def test_station_adapter_handles_the_dmx_dmy_trap(self):
+        base = {"stationName": "테스트측정소", "addr": "인천 연수구", "mangName": "도시대기",
+                "item": "PM10, PM2.5", "year": "2024"}
+        summary = AirStationsAdapter(self.conn, actor="TEST").ingest([
+            {**base, "dmX": "37.3900", "dmY": "126.6400"},                                   # dmX is latitude
+            {**base, "stationName": "뒤바뀐측정소", "dmX": "126.6400", "dmY": "37.3900"},     # swapped
+            {**base, "stationName": "서울측정소", "dmX": "37.5665", "dmY": "126.9780"},       # outside Songdo
+        ])
+        self.assertEqual((summary.loaded, summary.quarantined), (1, 2))
+        self.assertEqual(self._reasons(summary.batch_id), ["COORDINATE_SWAPPED", "OUT_OF_BOUNDS"])
+        lon, lat = self.conn.execute(
+            "SELECT ST_X(geom), ST_Y(geom) FROM environment.stations WHERE station_id = 'AK_테스트측정소'").fetchone()
+        self.assertEqual((lon, lat), (126.64, 37.39))
+
+    def test_faults_are_quarantined_and_corrections_upserted(self):
+        first = {"station_name": "송도", "type_code": "PM25", "value": "40", "data_time": "2026-10-05 09:00"}
+        adapter = AirMeasurementsAdapter(self.conn, actor="TEST")
+        summary = adapter.ingest([
+            first,
+            {**first, "value": "-", "flag": "통신장애", "data_time": "2026-10-05 10:00"},     # fault marker
+            {**first, "value": "9999", "data_time": "2026-10-05 11:00"},                       # impossible
+            {**first, "station_name": "없는측정소"},                                            # unknown station
+            {**first, "data_time": "2026-10-05 24:00"},                                        # midnight
+        ])
+        self.assertEqual((summary.loaded, summary.quarantined), (3, 2))
+        self.assertEqual(self._reasons(summary.batch_id), ["FAULT_READING", "FK_VIOLATION"])
+
+        # the official value for 09:00 is revised later: the row is replaced, the ledger keeps both
+        again = adapter.ingest([{**first, "value": "44"}, first])
+        self.assertEqual((again.loaded, again.duplicates), (1, 1))
+        rows = self.conn.execute(
+            """SELECT observed_at AT TIME ZONE 'Asia/Seoul', measured_value::float8, quality_flag
+               FROM environment.measurements m JOIN environment.stations s USING (station_id)
+               WHERE s.station_name_ko = '송도' AND type_code = 'PM25'
+                 AND observed_at >= '2026-10-05+09' AND observed_at < '2026-10-07+09'
+               ORDER BY observed_at""").fetchall()
+        self.assertEqual([(r[0].isoformat(), r[1], r[2]) for r in rows],
+                         [("2026-10-05T09:00:00", 44.0, "GOOD"), ("2026-10-05T11:00:00", 9999.0, "SUSPECT"),
+                          ("2026-10-06T00:00:00", 40.0, "GOOD")])
+        actions = [r[0] for r in self.conn.execute(
+            """SELECT action FROM core.event_audit_log
+               WHERE table_name = 'measurements' AND actor = 'TEST'
+                 AND payload_snapshot->>'data_time' = '2026-10-05 09:00' ORDER BY audit_id""")]
+        self.assertEqual(actions, ["INSERT", "UPDATE"])
+
+    def test_rollup_ignores_suspect_values_and_alert_lifecycle(self):
+        hours = {"09:00": "30", "10:00": "90", "11:00": "95", "12:00": "20"}
+        readings = [{"station_name": "동춘", "type_code": "PM25", "value": v, "data_time": f"2026-10-06 {h}"}
+                    for h, v in hours.items()]
+        readings.append({"station_name": "동춘", "type_code": "PM25", "value": "9999", "data_time": "2026-10-06 12:30"})
+        AirMeasurementsAdapter(self.conn, actor="TEST").ingest(readings)
+
+        def evaluate(until):
+            self.conn.execute("SELECT environment.refresh_hourly_summaries('2026-10-06+09', %s)", (until,))
+            self.conn.execute("SELECT environment.evaluate_alerts('2026-10-06+09', %s)", (until,))
+            return self.conn.execute(
+                """SELECT r.severity, a.status, a.peak_value::float8,
+                          (a.last_exceeded_hour - a.started_hour) = INTERVAL '1 hour'
+                   FROM environment.alerts a JOIN environment.alert_rules r USING (rule_id)
+                   WHERE a.station_id = 'AK_동춘' AND a.started_hour >= '2026-10-06+09'
+                   ORDER BY r.severity""").fetchall()
+
+        # up to 11:59 the episode is running: one ACTIVE alert per rule, spanning 10:00 and 11:00
+        self.assertEqual(evaluate("2026-10-06T12:00:00+09:00"),
+                         [("BAD", "ACTIVE", 95.0, True), ("VERY_BAD", "ACTIVE", 95.0, True)])
+        # the clean 12:00 hour resolves both; evaluating again must not create duplicates
+        after = evaluate("2026-10-06T13:00:00+09:00")
+        self.assertEqual(after, [("BAD", "RESOLVED", 95.0, True), ("VERY_BAD", "RESOLVED", 95.0, True)])
+        self.assertEqual(evaluate("2026-10-06T13:00:00+09:00"), after)
+        noon = self.conn.execute(
+            """SELECT avg_value::float8, sample_count FROM environment.hourly_summaries
+               WHERE station_id = 'AK_동춘' AND type_code = 'PM25'
+                 AND hour_start = '2026-10-06T12:00:00+09:00'""").fetchone()
+        self.assertEqual(noon, (20.0, 1))                     # the 9999 reading was SUSPECT and left out
+
+    def test_real_airkorea_sample_goes_through_the_pipeline(self):
+        sample = json.loads((Path(__file__).resolve().parent.parent / "fixtures" / "airkorea_sample.json")
+                            .read_text(encoding="utf-8"))
+        records = [r for name, items in sample["readings"].items() for item in items
+                   for r in explode_airkorea_item(item, name)]
+        faults = sum(1 for r in records if r["value"] in ("-", "", None))
+        self.assertGreater(faults, 0)                                          # the sample contains a real fault
+
+        stations = AirStationsAdapter(self.conn, actor="TEST").ingest(sample["stations"])
+        result = AirMeasurementsAdapter(self.conn, actor="TEST").ingest(records)
+        if stations.duplicates == 0:
+            # fresh database: the Songdo subset loads, the rest of Incheon and the faults are quarantined
+            self.assertEqual((stations.loaded, stations.quarantined), (5, len(sample["stations"]) - 5))
+            self.assertEqual((result.loaded, result.quarantined), (len(records) - faults, faults))
+        else:
+            # real data was already ingested (scripts/ingest_airkorea.py): stations are all known,
+            # and every reading is either a duplicate or an hour the live API has since revised
+            self.assertEqual((stations.loaded, stations.quarantined), (0, 0))
+            self.assertEqual(result.loaded + result.quarantined + result.duplicates, len(records))
+            self.assertLessEqual(result.quarantined, faults)
 
 if __name__ == "__main__":
     unittest.main()

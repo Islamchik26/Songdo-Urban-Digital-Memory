@@ -15,7 +15,8 @@ project task.
 | DB1 Mobility (`sql/02`): schema, real stop data, fixtures, 5 scenarios, `/api/v1/mobility/*` | Done |
 | DB2 Smart Building (`sql/03`): schema, fixtures, 5 scenarios, `/api/v1/building/*` | Done |
 | DB3 Tourism (`sql/04`): schema, fixtures, 5 scenarios, `/api/v1/tourism/*` | Done |
-| DB4–DB5 domain schemas and their 10 scenarios | Registered as *planned* |
+| DB4 Environment (`sql/05`): schema, real AirKorea stations, fixtures, 5 scenarios, `/api/v1/environment/*` | Done |
+| DB5 domain schema and its 5 scenarios | Registered as *planned* |
 | Cross-domain views, consumers, LaTeX handbook | Not started |
 
 ## Setup (native PostgreSQL, no Docker)
@@ -63,6 +64,18 @@ python scripts/ingest_bus_stops.py
 
 Of 9,657 Incheon rows it loads 513 Songdo stops and quarantines 9,144 (8,935 outside the
 bbox, 209 copies published by a second bus system). A second run changes nothing.
+
+**4c. (Optional) Ingest real AirKorea readings.** The seed contains the 5 real Songdo stations
+and generated readings for 2026-10-02. To add real readings through the pipeline:
+
+```bash
+python scripts/ingest_airkorea.py --from-fixture   # no key: replays fixtures/airkorea_sample.json
+python scripts/ingest_airkorea.py                  # live API: needs AIRKOREA_API_KEY in .env
+```
+
+It quarantines the Incheon stations outside the Songdo box and any `-` fault readings, then
+refreshes the hourly rollup and the alerts. Note: real, clean readings resolve the alert that the
+seed leaves ACTIVE at 아암 station, which is the correct behaviour.
 
 **5. Run.**
 
