@@ -27,6 +27,11 @@ from adapters.tourism_adapter import AttractionsAdapter, VisitSamplesAdapter  # 
 from api.config import settings  # noqa: E402
 from api.main import app  # noqa: E402
 from api.scenarios import SCENARIOS  # noqa: E402
+from consumers.api_client import parse_time  # noqa: E402
+from consumers.digital_twin_temporal_replay import city_state_as_of, replay, vehicle_state_as_of  # noqa: E402
+from consumers.smart_mobility_adapter import (  # noqa: E402
+    BoundedTelemetryQueue, RouteDriver, TelemetryPublisher, TelemetryUplink, UplinkStats)
+from consumers.vip_building_env_client import get_context  # noqa: E402
 
 
 def _db_available() -> bool:
@@ -344,6 +349,34 @@ class ApiValidationTests(unittest.TestCase):
         fresh = self.client.get("/api/v1/cross/freshness").json()
         self.assertEqual({f["view_name"] for f in fresh},
                          {"mv_facility_response_stats", "mv_stop_hourly_service", "mv_place_context"})
+
+    @needs_db
+    def test_consumer_vip_building_context(self):
+        ctx = get_context("BLD_G_TOWER", "2026-10-02T10:00:00+09:00", client=self.client)
+        self.assertEqual(ctx["building"]["building_id"], "BLD_G_TOWER")
+        self.assertEqual(ctx["outdoor"]["station"], "아암")
+        self.assertIn("PM25", ctx["outdoor"]["readings"])
+        self.assertIn(ctx["ventilation"]["action"],
+                      {"NORMAL", "RECIRCULATE", "INCREASE_FRESH_AIR", "FILTERED_INTAKE", "UNKNOWN"})
+        self.assertTrue(any("DEV-GT-TMP-06" in c for c in ctx["caveats"]))     # the silent sensor is reported
+        with self.assertRaises(RuntimeError):
+            get_context("BLD_DOES_NOT_EXIST", client=self.client)
+
+    @needs_db
+    def test_consumer_digital_twin_replay(self):
+        vehicles = vehicle_state_as_of("2026-10-02 08:20+09", client=self.client)
+        self.assertEqual(len(vehicles), 16)
+        self.assertTrue(all(v["in_service"] == (v["staleness_seconds"] <= 120) for v in vehicles))
+        self.assertEqual(vehicle_state_as_of("2026-10-02T05:00:00+09:00", client=self.client), [])
+        frames = list(replay("2026-10-02T08:00:00+09:00", "2026-10-02T08:20:00+09:00", 600, client=self.client))
+        self.assertEqual([f["as_of"][11:16] for f in frames], ["08:00", "08:10", "08:20"])
+        self.assertEqual([f["summary"]["active_incidents"] for f in frames], [0, 1, 1])
+        # the same incident is seen in a different state at different moments
+        self.assertEqual([i["status"] for f in frames[1:] for i in f["active_incidents"]], ["DISPATCHED", "ON_SCENE"])
+        evening = city_state_as_of("2026-10-02T18:30:00+09:00", client=self.client)
+        self.assertEqual(evening["summary"]["active_incidents"], 2)
+        with self.assertRaises(ValueError):
+            list(replay("2026-10-02T08:00+09:00", "2026-10-02T07:00+09:00", client=self.client))
 
 
 @needs_db
@@ -886,6 +919,89 @@ class CrossDomainDatabaseTests(unittest.TestCase):
         plan = "\n".join(r[0] for r in self.conn.execute(
             "EXPLAIN SELECT * FROM cross_domain.v_attractions_events_near_stops"))
         self.assertRegex(plan, r"idx_(stops|attractions)_geog")
+
+
+class ConsumerTests(unittest.TestCase):
+    """Telemetry node logic; the network is replaced by an in-memory transport."""
+    ROUTE = [(126.6409, 37.3849), (126.6434, 37.3871), (126.6436, 37.3903)]
+
+    def test_queue_drops_oldest_when_full(self):
+        queue = BoundedTelemetryQueue(3)
+        results = [queue.put({"n": n}) for n in range(5)]
+        self.assertEqual(results, [True, True, True, False, False])
+        self.assertEqual((queue.dropped, queue.high_water, len(queue)), (2, 3, 3))
+        self.assertEqual([queue.get(0)["n"] for _ in range(3)], [2, 3, 4])      # newest survive, in order
+        self.assertIsNone(queue.get(0))
+        queue.close()
+        self.assertTrue(queue.drained)
+        with self.assertRaises(ValueError):
+            BoundedTelemetryQueue(0)
+
+    def test_route_driver_stays_on_route(self):
+        driver = RouteDriver(self.ROUTE, cruise_kmh=30)
+        self.assertEqual((driver.state_at(0)["lon"], driver.state_at(0)["lat"]), self.ROUTE[0])
+        for second in range(0, 600, 7):                     # several laps, both directions
+            state = driver.state_at(second)
+            self.assertTrue(validate_coordinate(state["lon"], state["lat"]).ok)
+            self.assertTrue(0 <= state["heading_deg"] < 360)
+            self.assertGreater(state["speed_kmh"], 0)
+        end = driver.state_at(driver.total / (30 / 3.6))    # exactly one traversal -> last stop
+        self.assertAlmostEqual(end["lon"], self.ROUTE[-1][0], places=4)
+        self.assertAlmostEqual(end["lat"], self.ROUTE[-1][1], places=4)
+
+    def test_publisher_injects_glitch_and_resend(self):
+        publisher = TelemetryPublisher("VEH-AV1-01", RouteDriver(self.ROUTE), faults=True)
+        now = parse_time("2026-10-02T10:00:00+09:00")
+        ticks = [publisher.next_packets(n * 0.2, now + (n * 0.2) * (parse_time("2026-10-02T10:00:01+09:00") - now))
+                 for n in range(40)]
+        self.assertFalse(validate_coordinate(ticks[24][0]["lon"], ticks[24][0]["lat"]).ok)   # 25th: glitch
+        self.assertEqual(len(ticks[39]), 2)                                                  # 40th: re-send
+        self.assertEqual(ticks[39][0], ticks[38][0])
+        self.assertTrue(all(len(t) == 1 for t in ticks[:39]))
+        clean = TelemetryPublisher("VEH-AV1-01", RouteDriver(self.ROUTE), faults=False)
+        self.assertTrue(all(validate_coordinate(p["lon"], p["lat"]).ok
+                            for n in range(60) for p in clean.next_packets(n, now)))
+
+    def test_parse_time_assumes_korean_time(self):
+        self.assertEqual(parse_time("2026-10-02 08:20").isoformat(), "2026-10-02T08:20:00+09:00")
+        self.assertEqual(parse_time("2026-10-02T08:20:00+00:00").utcoffset().total_seconds(), 0)
+
+    def _uplink(self, responses):
+        import httpx
+        calls = []
+
+        def handler(request):
+            calls.append(request)
+            status, body = responses[min(len(calls), len(responses)) - 1]
+            if status is None:
+                raise httpx.ConnectError("link down")
+            return httpx.Response(status, json=body)
+
+        stats = UplinkStats()
+        client = httpx.Client(transport=httpx.MockTransport(handler), base_url="http://test")
+        self.addCleanup(client.close)
+        return TelemetryUplink(client, BoundedTelemetryQueue(5), stats, max_retries=3, backoff_s=0), stats, calls
+
+    def test_uplink_retries_transient_errors_only(self):
+        packet = {"vehicle_id": "VEH-AV1-01", "lon": 126.64, "lat": 37.39, "speed_kmh": 20,
+                  "observed_at": "2026-10-02T10:00:00+09:00"}
+        uplink, stats, calls = self._uplink([(None, None), (503, {}), (202, {"outcome": "LOADED"})])
+        self.assertEqual(uplink.send(packet), "LOADED")
+        self.assertEqual((len(calls), stats.retries, stats.delivered), (3, 2, 1))
+        self.assertEqual(calls[0].headers["X-API-Token"], settings.ingest_api_token)
+        self.assertEqual(calls[0].content, calls[2].content)        # identical bytes -> server-side dedup works
+
+        uplink, stats, calls = self._uplink([(422, {"detail": "bad"})])
+        self.assertEqual(uplink.send(packet), "REJECTED")           # a wrong packet is not retried
+        self.assertEqual((len(calls), stats.retries, stats.rejected), (1, 0, 1))
+
+        uplink, stats, calls = self._uplink([(500, {})])
+        self.assertEqual(uplink.send(packet), "FAILED")             # gives up after max_retries
+        self.assertEqual((len(calls), stats.failed), (4, 1))
+
+        uplink, stats, _ = self._uplink([(202, {"outcome": "QUARANTINED"}), (202, {"outcome": "DUPLICATE"})])
+        self.assertEqual([uplink.send(packet), uplink.send(packet)], ["QUARANTINED", "DUPLICATE"])
+        self.assertEqual((stats.as_dict()["quarantined"], stats.as_dict()["duplicates"]), (1, 1))
 
 
 if __name__ == "__main__":

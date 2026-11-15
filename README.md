@@ -18,7 +18,8 @@ project task.
 | DB4 Environment (`sql/05`): schema, real AirKorea stations, fixtures, 5 scenarios, `/api/v1/environment/*` | Done |
 | DB5 Safety & Incident (`sql/06`): schema, state machine, fixtures, 6 scenarios, `/api/v1/safety/*` | Done |
 | Cross-domain federation (`sql/07`): 3 views, 3 materialized views with a logged refresh policy, `/api/v1/cross/*` | Done |
-| Consumers, UI map and ingestion forms, LaTeX handbook | Not started |
+| Consumers: telemetry node, VIP building client, digital-twin replay (`consumers/`) | Done |
+| UI map and ingestion forms, LaTeX handbook | Not started |
 
 ## Setup (native PostgreSQL, no Docker)
 
@@ -95,6 +96,19 @@ npm run dev        # http://localhost:5173 (needs the API running on :8000)
 
 `npm run build` writes `ui/dist`; when that folder exists, FastAPI serves the console at
 `http://127.0.0.1:8000/` so the whole demo runs from one process.
+
+**7. Downstream consumers.** Three programs that use the platform only through its API, never
+through the database. Each one uses the server on `SONGDO_API_URL` (default
+`http://127.0.0.1:8000`); if none is running, it starts the API inside its own process.
+
+```bash
+python -m consumers.smart_mobility_adapter            # ROS-style node: streams GPS of a shuttle for 20 s
+python -m consumers.vip_building_env_client           # indoor state of G-Tower + outdoor air around it
+python -m consumers.digital_twin_temporal_replay      # city state every 5 min, 08:00-08:30 on the fixture day
+```
+
+Add `--help` to any of them for the options. The telemetry node writes real rows stamped with the
+current time (the fixture day is not touched); `python scripts/setup_db.py --reset` removes them.
 
 ## How to deliver a scenario
 
