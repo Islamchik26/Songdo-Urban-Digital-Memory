@@ -17,7 +17,8 @@ project task.
 | DB3 Tourism (`sql/04`): schema, fixtures, 5 scenarios, `/api/v1/tourism/*` | Done |
 | DB4 Environment (`sql/05`): schema, real AirKorea stations, fixtures, 5 scenarios, `/api/v1/environment/*` | Done |
 | DB5 Safety & Incident (`sql/06`): schema, state machine, fixtures, 6 scenarios, `/api/v1/safety/*` | Done |
-| Cross-domain views, consumers, LaTeX handbook | Not started |
+| Cross-domain federation (`sql/07`): 3 views, 3 materialized views with a logged refresh policy, `/api/v1/cross/*` | Done |
+| Consumers, UI map and ingestion forms, LaTeX handbook | Not started |
 
 ## Setup (native PostgreSQL, no Docker)
 

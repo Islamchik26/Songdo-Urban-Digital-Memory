@@ -20,6 +20,7 @@ DOMAINS = {
     "tourism": "DB3 · Tourism",
     "environment": "DB4 · Environment",
     "safety": "DB5 · Safety & Incident",
+    "cross": "Cross-Domain · Federation",
 }
 
 
@@ -847,6 +848,96 @@ _SCENARIOS: list[Scenario] = [
         ORDER BY i.reported_at
         """,
         (Param("as_of", "As of time (ISO, with offset)", "datetime", "2026-10-02T18:30:00+09:00"),),
+    ),
+    # ----------------------------------------------------------------- cross
+    Scenario(
+        "X-1", "cross", "Attractions & events near transit stops",
+        "View over mobility and tourism: attractions within 500 m of a stop, with events running on a date.",
+        "ready",
+        """
+        SELECT stop_name, stop_number, attraction_name, distance_meters::float8 AS distance_meters,
+               active_event_name, expected_attendance, event_start_date, event_end_date
+        FROM cross_domain.v_attractions_events_near_stops
+        WHERE (%(stop_number)s = '' OR stop_number = %(stop_number)s)
+          AND (active_event_name IS NULL OR %(on_date)s::date BETWEEN event_start_date AND event_end_date)
+        ORDER BY distance_meters, stop_number, event_start_date
+        LIMIT %(limit)s
+        """,
+        (Param("stop_number", "Stop number (empty = all stops)", "str", "38367"),
+         Param("on_date", "Events running on (YYYY-MM-DD)", "date", "2026-10-02"),
+         LIMIT),
+    ),
+    Scenario(
+        "X-2", "cross", "Building devices with outdoor air context",
+        "View over building and environment: each device with the latest PM reading of the nearest station.",
+        "ready",
+        """
+        SELECT building_name_ko, device_id, device_type, current_status, nearest_env_station,
+               distance_to_station_meters::float8 AS distance_to_station_meters, pollutant_type,
+               outdoor_value::float8 AS outdoor_value, reading_time
+        FROM cross_domain.v_building_devices_with_environmental_context
+        WHERE building_id = %(building_id)s
+        ORDER BY device_id, pollutant_type
+        """,
+        (BUILDING,),
+    ),
+    Scenario(
+        "X-3", "cross", "Incidents impacting transit & air context",
+        "View over safety, mobility and environment: open incidents, stops within 600 m, local air alerts.",
+        "ready",
+        """
+        SELECT incident_id, title, incident_type, severity, current_status, nearby_stop_name,
+               distance_to_stop_meters::float8 AS distance_to_stop_meters, nearest_env_station, active_env_alert
+        FROM cross_domain.v_incidents_mobility_environmental_impact
+        ORDER BY incident_id, distance_to_stop_meters
+        LIMIT %(limit)s
+        """,
+        (LIMIT,),
+    ),
+    Scenario(
+        "X-4", "cross", "Place context cards (materialized view)",
+        "Precomputed per place: nearest stop, air station, fire and police unit. Read from a materialized view.",
+        "ready",
+        """
+        SELECT name_ko, category, nearest_stop_name, nearest_stop_m::float8 AS nearest_stop_m, stops_within_500m,
+               nearest_env_station, nearest_env_station_m::float8 AS nearest_env_station_m,
+               nearest_fire_unit, nearest_fire_unit_m::float8 AS nearest_fire_unit_m,
+               nearest_police_unit, nearest_police_unit_m::float8 AS nearest_police_unit_m
+        FROM cross_domain.mv_place_context
+        WHERE %(category)s = '' OR category = %(category)s
+        ORDER BY name_ko
+        """,
+        (Param("category", "Category (PARK, SHOPPING, UNIVERSITY, ... or empty)", "str", ""),),
+    ),
+    Scenario(
+        "X-5", "cross", "Facility response statistics (materialized view)",
+        "The DB5-4 analytics, precomputed per facility and month. Compare its speed with DB5-4.",
+        "ready",
+        """
+        SELECT facility_name_ko, facility_type, SUM(incidents)::int AS incidents,
+               ROUND(SUM(avg_response_s * incidents) / SUM(incidents))::int AS avg_response_s,
+               MAX(p90_response_s) AS worst_monthly_p90_s,
+               ROUND(100.0 * SUM(sla_met) / SUM(incidents), 1)::float8 AS sla_met_pct
+        FROM cross_domain.mv_facility_response_stats
+        WHERE (%(include_drills)s = 1 OR NOT is_drill)
+          AND month >= date_trunc('month', %(from_date)s::date)::date
+          AND month <= %(to_date)s::date
+        GROUP BY facility_id, facility_name_ko, facility_type
+        ORDER BY avg_response_s
+        """,
+        (Param("from_date", "From month (YYYY-MM-DD)", "date", "2026-07-01"),
+         Param("to_date", "To month (YYYY-MM-DD)", "date", "2026-10-02"),
+         Param("include_drills", "Include drills (0 or 1)", "int", 0, 0, 1)),
+    ),
+    Scenario(
+        "X-6", "cross", "Materialized view freshness",
+        "When each materialized view was last refreshed, how long it took and how many rows it holds.",
+        "ready",
+        """
+        SELECT view_name, refreshed_at, age_minutes, row_count, duration_ms::float8 AS duration_ms
+        FROM cross_domain.v_materialized_view_freshness
+        ORDER BY view_name
+        """,
     ),
 ]
 

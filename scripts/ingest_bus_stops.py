@@ -89,6 +89,7 @@ def main() -> None:
     started = time.perf_counter()
     with psycopg.connect(settings.conninfo()) as conn:
         summary = StopsAdapter(conn, actor="ingest_bus_stops").ingest(incheon)
+        conn.execute("SELECT * FROM cross_domain.refresh_materialized_views()")   # refresh policy
     print(f"  batch {summary.batch_id}: loaded {summary.loaded}, quarantined {summary.quarantined}, "
           f"duplicates {summary.duplicates}  ({time.perf_counter() - started:.1f} s)")
 

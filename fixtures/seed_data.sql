@@ -59689,3 +59689,6 @@ WHERE s.is_drill AND s.t_onscene IS NOT NULL
 ON CONFLICT (incident_id) DO NOTHING;
 
 DROP TABLE _seed_incidents;
+
+-- materialized views are refreshed once, after everything is loaded
+SELECT * FROM cross_domain.refresh_materialized_views();

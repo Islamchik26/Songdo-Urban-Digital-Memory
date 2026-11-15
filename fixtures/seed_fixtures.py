@@ -286,6 +286,8 @@ def main() -> None:
     lines += tourism_section(rng, PLACE_XY)
     lines += environment_section(rng, n)
     lines += safety_section(rng, n, PLACE_XY, [st["xy"] for st in load_stops()])
+    lines += ["", "-- materialized views are refreshed once, after everything is loaded",
+              "SELECT * FROM cross_domain.refresh_materialized_views();"]
 
     OUT.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
     print(f"Wrote {OUT.relative_to(ROOT)} ({OUT.stat().st_size / 1024:.0f} kB, N={n})")

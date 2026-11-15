@@ -10,8 +10,8 @@ from fastapi.staticfiles import StaticFiles
 
 from api.config import ROOT
 from api.database import close_pool, fetch_one, open_pool
-from api.routers import (building_router, core_router, environment_router, mobility_router,
-                         safety_router, scenario_router, tourism_router)
+from api.routers import (building_router, core_router, cross_router, environment_router,
+                         mobility_router, safety_router, scenario_router, tourism_router)
 
 
 @asynccontextmanager
@@ -35,6 +35,7 @@ app.include_router(building_router.router)
 app.include_router(tourism_router.router)
 app.include_router(environment_router.router)
 app.include_router(safety_router.router)
+app.include_router(cross_router.router)
 app.include_router(scenario_router.router)
 
 @app.get("/health", tags=["system"], summary="Database and PostGIS availability")

@@ -318,6 +318,33 @@ class ApiValidationTests(unittest.TestCase):
                              headers=headers)
         self.assertEqual(r.status_code, 422)
 
+    @needs_db
+    def test_cross_domain_endpoints(self):
+        near = self.client.get("/api/v1/cross/attractions-near-stops",
+                               params={"stop_number": "38367", "on_date": "2026-10-02"}).json()
+        self.assertTrue(near)
+        self.assertTrue(all(r["distance_meters"] <= 500 for r in near))
+        self.assertIn("EVT_SMARTCITY_EXPO", {r["event_id"] for r in near})
+        self.assertNotIn("EVT_PARK_MARKET", {r["event_id"] for r in near})          # cancelled
+
+        ctx = self.client.get("/api/v1/cross/building-context/BLD_G_TOWER").json()
+        self.assertEqual({r["nearest_env_station"] for r in ctx}, {"아암"})
+        self.assertEqual({r["pollutant_type"] for r in ctx}, {"PM10", "PM25"})
+        self.assertEqual(self.client.get("/api/v1/cross/building-context/NOPE").status_code, 404)
+
+        impact = self.client.get("/api/v1/cross/incident-impact").json()
+        self.assertTrue(impact)
+        self.assertTrue(all(r["current_status"] in ("REPORTED", "DISPATCHED", "ON_SCENE") for r in impact))
+        self.assertTrue(all(r["distance_to_stop_meters"] <= 600 for r in impact))
+
+        cards = self.client.get("/api/v1/cross/place-context").json()
+        self.assertEqual(len(cards), 15)
+        self.assertTrue(all(c["nearest_stop_name"] and c["nearest_fire_unit"] for c in cards))
+        self.assertEqual(self.client.post("/api/v1/cross/refresh").status_code, 401)
+        fresh = self.client.get("/api/v1/cross/freshness").json()
+        self.assertEqual({f["view_name"] for f in fresh},
+                         {"mv_facility_response_stats", "mv_stop_hourly_service", "mv_place_context"})
+
 
 @needs_db
 class DatabaseTests(unittest.TestCase):
@@ -801,6 +828,64 @@ class SafetyDatabaseTests(unittest.TestCase):
         ).fetchone()
         self.assertGreater(passed, 0)
         self.assertGreater(failed, 0)
+
+
+@needs_db
+class CrossDomainDatabaseTests(unittest.TestCase):
+    def setUp(self):
+        self.conn = psycopg.connect(settings.conninfo())
+        self.conn.execute("SELECT 1")  # open the transaction; everything below is rolled back
+
+    def tearDown(self):
+        self.conn.rollback()
+        self.conn.close()
+
+    def test_materialized_stats_match_the_live_query(self):
+        live = self.conn.execute(
+            """SELECT i.assigned_facility_id, count(*),
+                      round(avg(extract(epoch FROM h.changed_at - i.reported_at)))::int
+               FROM safety.incidents i
+               JOIN safety.incident_status_history h ON h.incident_id = i.incident_id AND h.to_status = 'ON_SCENE'
+               WHERE NOT i.is_drill AND i.reported_at < '2026-10-01+09'
+               GROUP BY 1 ORDER BY 1""").fetchall()
+        materialized = self.conn.execute(
+            """SELECT facility_id, sum(incidents)::bigint,
+                      round(sum(avg_response_s::numeric * incidents) / sum(incidents))::int
+               FROM cross_domain.mv_facility_response_stats
+               WHERE NOT is_drill AND month < '2026-10-01'
+               GROUP BY 1 ORDER BY 1""").fetchall()
+        self.assertEqual([r[:2] for r in live], [r[:2] for r in materialized])     # identical counts
+        for (_, _, a), (_, _, b) in zip(live, materialized):
+            self.assertLessEqual(abs(a - b), 1)                                    # averages agree to the second
+
+    def test_refresh_is_logged_and_picks_up_new_data(self):
+        before = self.conn.execute(
+            "SELECT count(*) FROM cross_domain.mv_place_context").fetchone()[0]
+        self.conn.execute(
+            """INSERT INTO core.places (place_id, name_ko, category, geom, provenance)
+               VALUES ('PLC_TEST', '테스트 장소', 'TEST', ST_SetSRID(ST_MakePoint(126.64, 37.39), 4326), 'SRC_CORE_01')""")
+        self.assertEqual(self.conn.execute(
+            "SELECT count(*) FROM cross_domain.mv_place_context").fetchone()[0], before)   # stale until refreshed
+        refreshed = self.conn.execute("SELECT view_name, row_count FROM cross_domain.refresh_materialized_views()").fetchall()
+        self.assertEqual(dict(refreshed)["mv_place_context"], before + 1)
+        logged = self.conn.execute(
+            """SELECT count(*) FROM cross_domain.refresh_log
+               WHERE refreshed_at >= transaction_timestamp()""").fetchone()[0]
+        self.assertEqual(logged, 3)
+
+    def test_incident_view_follows_the_state_machine(self):
+        in_view = "SELECT count(*) FROM cross_domain.v_incidents_mobility_environmental_impact WHERE incident_id = %s"
+        self.assertGreater(self.conn.execute(in_view, ("INC-20261002-0003",)).fetchone()[0], 0)
+        self.assertEqual(self.conn.execute(in_view, ("INC-20261002-0001",)).fetchone()[0], 0)   # closed
+        self.conn.execute(
+            "SELECT safety.transition_incident('INC-20261002-0003', 'RESOLVED', '2026-10-02T19:30:00+09:00', 'TEST')")
+        self.assertEqual(self.conn.execute(in_view, ("INC-20261002-0003",)).fetchone()[0], 0)   # gone at once
+
+    def test_views_use_spatial_indexes(self):
+        self.conn.execute("SET LOCAL enable_seqscan = off")
+        plan = "\n".join(r[0] for r in self.conn.execute(
+            "EXPLAIN SELECT * FROM cross_domain.v_attractions_events_near_stops"))
+        self.assertRegex(plan, r"idx_(stops|attractions)_geog")
 
 
 if __name__ == "__main__":

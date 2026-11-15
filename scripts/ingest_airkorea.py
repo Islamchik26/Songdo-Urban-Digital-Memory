@@ -119,6 +119,7 @@ def main() -> None:
         print(f"  stations      batch {s.batch_id}: loaded {s.loaded}, quarantined {s.quarantined}, duplicates {s.duplicates}")
         m = AirMeasurementsAdapter(conn, actor="ingest_airkorea").ingest(records)
         print(f"  measurements  batch {m.batch_id}: loaded {m.loaded}, quarantined {m.quarantined}, duplicates {m.duplicates}")
+        conn.execute("SELECT * FROM cross_domain.refresh_materialized_views()")   # refresh policy
         if times:
             start, end = min(times), max(times) + timedelta(hours=1)
             rolled = conn.execute("SELECT environment.refresh_hourly_summaries(%s, %s)", (start, end)).fetchone()[0]
