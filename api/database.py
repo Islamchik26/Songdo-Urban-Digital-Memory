@@ -19,6 +19,8 @@ pool = ConnectionPool(
     min_size=1,
     max_size=8,
     kwargs={"row_factory": dict_row},
+    # Hosted databases (e.g. Neon) drop idle connections when they pause; test before handing one out.
+    check=ConnectionPool.check_connection,
     open=False,  # opened by the FastAPI lifespan (or open_pool() in scripts)
 )
 

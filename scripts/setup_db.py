@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 
 import psycopg
+from psycopg.conninfo import conninfo_to_dict
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -41,7 +42,8 @@ def main() -> None:
     parser.add_argument("--no-seed", action="store_true", help="skip fixtures/seed_data.sql")
     args = parser.parse_args()
 
-    print(f"Database {settings.db_name} on {settings.db_host}:{settings.db_port} as {settings.db_user}")
+    target = conninfo_to_dict(settings.conninfo())   # the real target, also when DATABASE_URL is set
+    print(f"Database {target.get('dbname')} on {target.get('host')}:{target.get('port', 5432)} as {target.get('user')}")
     try:
         conn = psycopg.connect(settings.conninfo())
     except psycopg.OperationalError as exc:

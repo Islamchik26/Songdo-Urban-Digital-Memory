@@ -25,7 +25,13 @@ class Settings:
     min_lat: float = float(os.getenv("SONGDO_MIN_LAT", "37.350"))
     max_lat: float = float(os.getenv("SONGDO_MAX_LAT", "37.425"))
 
+    # A full URL (e.g. from Neon: postgresql://user:pass@host/db?sslmode=require) overrides DB_*.
+    database_url: str = os.getenv("DATABASE_URL", "")
+
     def conninfo(self, dbname: str | None = None) -> str:
+        if self.database_url:
+            extra = {"dbname": dbname} if dbname else {}
+            return make_conninfo(self.database_url, connect_timeout=10, **extra)
         return make_conninfo(
             host=self.db_host,
             port=self.db_port,

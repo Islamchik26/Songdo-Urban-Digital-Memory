@@ -1,0 +1,15 @@
+# Render Blueprint: Render builds the Dockerfile in the cloud and runs it. See DEPLOY.md.
+services:
+  - type: web
+    name: songdo-urban-memory
+    runtime: docker
+    plan: free
+    region: singapore            # closest Render region to Korea
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health     # 503 when the database is unreachable, so a bad DATABASE_URL fails the deploy
+    autoDeploy: true             # every push to main redeploys
+    envVars:
+      - key: DATABASE_URL        # Neon connection string, entered in the Render dashboard (never committed)
+        sync: false
+      - key: INGEST_API_TOKEN    # random token for write endpoints; read it in Render -> Environment
+        generateValue: true

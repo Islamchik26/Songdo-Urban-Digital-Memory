@@ -22,6 +22,9 @@ services:
   api:
     build: .
     container_name: songdo_api
+    # Locally the fresh database container is empty, so build schema + seed before serving
+    # (the hosted deployment loads its database once instead, see DEPLOY.md).
+    command: ["sh", "-c", "python scripts/setup_db.py && uvicorn api.main:app --host 0.0.0.0 --port 8000"]
     environment:
       DB_HOST: db
       DB_PORT: "5432"
