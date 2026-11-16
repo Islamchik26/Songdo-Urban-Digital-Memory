@@ -273,7 +273,7 @@ _SCENARIOS: list[Scenario] = [
             SELECT pl.place_id, pl.road_address,
                    ROUND(ST_Distance(b.geom::geography, pl.geom::geography)::numeric, 1)::float8 AS distance_m
             FROM core.places pl
-            ORDER BY b.geom <-> pl.geom
+            ORDER BY ST_Distance(b.geom::geography, pl.geom::geography)
             LIMIT 1
         ) n ON TRUE
         ORDER BY b.building_id
@@ -398,7 +398,7 @@ _SCENARIOS: list[Scenario] = [
             SELECT s.stop_name_ko,
                    ROUND(ST_Distance(a.geom::geography, s.geom::geography)::numeric, 1)::float8 AS distance_m
             FROM mobility.stops s
-            ORDER BY a.geom <-> s.geom
+            ORDER BY ST_Distance(a.geom::geography, s.geom::geography)
             LIMIT 1
         ) n ON TRUE
         WHERE (%(wheelchair_only)s = 0 OR a.is_wheelchair_accessible)
@@ -694,7 +694,7 @@ _SCENARIOS: list[Scenario] = [
             SELECT s.stop_name_ko,
                    ROUND(ST_Distance(f.geom::geography, s.geom::geography)::numeric, 1)::float8 AS distance_m
             FROM mobility.stops s
-            ORDER BY f.geom <-> s.geom
+            ORDER BY ST_Distance(f.geom::geography, s.geom::geography)
             LIMIT 1
         ) n ON TRUE
         WHERE %(responder)s = '' OR f.responder = %(responder)s
@@ -804,7 +804,7 @@ _SCENARIOS: list[Scenario] = [
             SELECT p.name_ko,
                    ROUND(ST_Distance(h.centre::geography, p.geom::geography)::numeric)::int AS distance_m
             FROM core.places p
-            ORDER BY h.centre <-> p.geom
+            ORDER BY ST_Distance(h.centre::geography, p.geom::geography)
             LIMIT 1
         ) n ON TRUE
         ORDER BY h.incidents DESC
@@ -890,7 +890,7 @@ _SCENARIOS: list[Scenario] = [
         SELECT incident_id, title, incident_type, severity, current_status, nearby_stop_name,
                distance_to_stop_meters::float8 AS distance_to_stop_meters, nearest_env_station, active_env_alert
         FROM cross_domain.v_incidents_mobility_environmental_impact
-        ORDER BY incident_id, distance_to_stop_meters
+        ORDER BY incident_id, distance_to_stop_meters, stop_id, active_env_alert   -- total order: LIMIT is stable
         LIMIT %(limit)s
         """,
         (LIMIT,),

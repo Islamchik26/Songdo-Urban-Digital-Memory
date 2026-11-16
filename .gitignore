@@ -4,10 +4,9 @@ __pycache__/
 *.pyc
 node_modules/
 ui/dist/
+# generated evidence is committed (scripts/evidence.py); backups and scratch files are not
 outputs/*
 !outputs/evidence/
-outputs/evidence/*
-!outputs/evidence/.gitkeep
 *.backup
 .vscode/
 # raw downloads are large; record file name + SHA-256 in source_registry.csv instead

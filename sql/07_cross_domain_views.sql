@@ -5,6 +5,11 @@
 --
 -- The three view names and their columns follow the course handbook. Two deliberate
 -- differences from the handbook's SQL are marked "DIFFERS" below.
+--
+-- "Nearest X" is always ranked by ST_Distance on geography (metres). Ranking by
+-- `geom <-> geom` on lon/lat degrees is wrong here: at 37.4 N a degree of longitude is
+-- only 0.79 of a degree of latitude, so it picked 동막 (1722 m) instead of 송도 (1478 m)
+-- as the station nearest to IGC. The candidate sets are small (5-513 rows).
 -- =============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -49,7 +54,7 @@ LEFT JOIN LATERAL (
     FROM (
         SELECT s.station_id, s.station_name_ko, s.geom
         FROM environment.stations s
-        ORDER BY b.geom <-> s.geom
+        ORDER BY ST_Distance(b.geom::geography, s.geom::geography)
         LIMIT 1
     ) st
     LEFT JOIN LATERAL (
@@ -84,7 +89,7 @@ JOIN mobility.stops s ON ST_DWithin(inc.geom::geography, s.geom::geography, 600.
 LEFT JOIN LATERAL (
     SELECT es.station_id, es.station_name_ko
     FROM environment.stations es
-    ORDER BY inc.geom <-> es.geom
+    ORDER BY ST_Distance(inc.geom::geography, es.geom::geography)
     LIMIT 1
 ) st ON TRUE
 LEFT JOIN environment.alerts al ON al.station_id = st.station_id AND al.status = 'ACTIVE'
@@ -163,22 +168,22 @@ FROM core.places p
 LEFT JOIN LATERAL (
     SELECT s.stop_id, s.stop_name_ko,
            ROUND(ST_Distance(p.geom::geography, s.geom::geography)::NUMERIC, 1) AS distance_m
-    FROM mobility.stops s ORDER BY p.geom <-> s.geom LIMIT 1
+    FROM mobility.stops s ORDER BY ST_Distance(p.geom::geography, s.geom::geography) LIMIT 1
 ) stop ON TRUE
 LEFT JOIN LATERAL (
     SELECT es.station_name_ko,
            ROUND(ST_Distance(p.geom::geography, es.geom::geography)::NUMERIC, 1) AS distance_m
-    FROM environment.stations es ORDER BY p.geom <-> es.geom LIMIT 1
+    FROM environment.stations es ORDER BY ST_Distance(p.geom::geography, es.geom::geography) LIMIT 1
 ) env ON TRUE
 LEFT JOIN LATERAL (
     SELECT f.facility_name_ko,
            ROUND(ST_Distance(p.geom::geography, f.geom::geography)::NUMERIC, 1) AS distance_m
-    FROM safety.facilities f WHERE f.responder = 'FIRE' ORDER BY p.geom <-> f.geom LIMIT 1
+    FROM safety.facilities f WHERE f.responder = 'FIRE' ORDER BY ST_Distance(p.geom::geography, f.geom::geography) LIMIT 1
 ) fire ON TRUE
 LEFT JOIN LATERAL (
     SELECT f.facility_name_ko,
            ROUND(ST_Distance(p.geom::geography, f.geom::geography)::NUMERIC, 1) AS distance_m
-    FROM safety.facilities f WHERE f.responder = 'POLICE' ORDER BY p.geom <-> f.geom LIMIT 1
+    FROM safety.facilities f WHERE f.responder = 'POLICE' ORDER BY ST_Distance(p.geom::geography, f.geom::geography) LIMIT 1
 ) police ON TRUE;
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_mv_place_context ON cross_domain.mv_place_context (place_id);
