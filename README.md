@@ -19,7 +19,8 @@ project task.
 | DB5 Safety & Incident (`sql/06`): schema, state machine, fixtures, 6 scenarios, `/api/v1/safety/*` | Done |
 | Cross-domain federation (`sql/07`): 3 views, 3 materialized views with a logged refresh policy, `/api/v1/cross/*` | Done |
 | Consumers: telemetry node, VIP building client, digital-twin replay (`consumers/`) | Done |
-| Reproducibility evidence (`outputs/evidence/`), LaTeX handbook | Not started |
+| Evidence kit (`scripts/evidence.py` → `outputs/evidence/`): clean build, restore, acceptance, performance, API, browser | Done |
+| LaTeX handbook | Not started |
 
 ## Setup (native PostgreSQL, no Docker)
 
@@ -151,6 +152,30 @@ current time (the fixture day is not touched); `python scripts/setup_db.py --res
 - Landmark coordinates in the seed data are approximate and typed by hand (`SRC_CORE_01`).
   Verification levels in `source_registry.csv` are copied from the handbook and still need to
   be re-verified by the team.
+
+## Evidence kit
+
+```bash
+python scripts/evidence.py              # about 3-5 minutes; --no-browser skips the Chrome checks
+```
+
+The script builds a new, disposable database `songdo_evidence` from this repository (`psql -v
+ON_ERROR_STOP=1` for `sql/00`–`07` and the seed), then proves the platform on it and writes the
+results to `outputs/evidence/` (start with its `README.md`):
+
+- **clean build** log and schema inventory, **versions** of every component and the git commit;
+- **backup and restore**: `pg_dump -Fc` → `pg_restore --exit-on-error`, then rows, objects, task
+  results and constraint behaviour compared between the two databases;
+- the **test suite** on the clean database;
+- an **acceptance matrix**: one executed check per scenario, written against the midterm
+  feedback's "Required acceptance" column, plus two concurrency races;
+- **performance**: `EXPLAIN (ANALYZE, BUFFERS)` and timings of every task, index versus no-index;
+- **API** contract cases (422 / 401 / 409, retries, 12 concurrent identical requests) and latency;
+- the **web console**: every task opened in headless Chrome, rows read from the page and compared
+  with the API, plus screenshots.
+
+Your working database is never touched; the two evidence databases are dropped at the end
+(`--keep` keeps them). The backup file goes to `outputs/` and is not committed.
 
 ## Backup and restore
 

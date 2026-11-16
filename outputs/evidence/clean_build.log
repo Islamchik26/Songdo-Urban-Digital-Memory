@@ -1,0 +1,92 @@
+# Clean build of songdo_evidence from the repository
+# 2026-11-16 18:37:46 +0900
+# command per file: psql -X -q -v ON_ERROR_STOP=1 -d songdo_evidence -f <file>
+
+ok   sql/00_init_database.sql             exit 0     1123 ms
+ok   sql/01_core_schema.sql               exit 0      333 ms
+      | psql:C:/Users/123/Documents/GitHub/Songdo-Urban-Digital-Memory/sql/01_core_schema.sql:187: NOTICE:  trigger "trg_audit_no_update_delete" for relation "core.event_audit_log" does not exist, skipping
+      | psql:C:/Users/123/Documents/GitHub/Songdo-Urban-Digital-Memory/sql/01_core_schema.sql:192: NOTICE:  trigger "trg_audit_no_truncate" for relation "core.event_audit_log" does not exist, skipping
+ok   sql/02_db1_mobility.sql              exit 0      212 ms
+ok   sql/03_db2_building.sql              exit 0      228 ms
+ok   sql/04_db3_tourism.sql               exit 0      190 ms
+ok   sql/05_db4_environment.sql           exit 0      212 ms
+ok   sql/06_db5_safety.sql                exit 0      318 ms
+      | psql:C:/Users/123/Documents/GitHub/Songdo-Urban-Digital-Memory/sql/06_db5_safety.sql:136: NOTICE:  trigger "trg_history_append_only" for relation "safety.incident_status_history" does not exist, skipping
+      | psql:C:/Users/123/Documents/GitHub/Songdo-Urban-Digital-Memory/sql/06_db5_safety.sql:189: NOTICE:  trigger "trg_incidents_status_guard" for relation "safety.incidents" does not exist, skipping
+      | psql:C:/Users/123/Documents/GitHub/Songdo-Urban-Digital-Memory/sql/06_db5_safety.sql:194: NOTICE:  trigger "trg_incidents_status_log" for relation "safety.incidents" does not exist, skipping
+ok   sql/07_cross_domain_views.sql        exit 0      317 ms
+ok   fixtures/seed_data.sql               exit 0    15550 ms
+      | refresh_hourly_summaries 
+      | --------------------------
+      |                       720
+      | (1 row)
+      | 
+      |  evaluate_alerts 
+      | -----------------
+      |                7
+      | (1 row)
+      | 
+      |          view_name          | row_count | duration_ms 
+      | ----------------------------+-----------+-------------
+      |  mv_facility_response_stats |        40 |       184.3
+      |  mv_stop_hourly_service     |       612 |        65.2
+      |  mv_place_context           |        15 |       132.5
+      | (3 rows)
+
+total 18.7 s
+
+schema objects:
+  tables                 39
+  views                  4
+  materialized_views     3
+  indexes                109
+  gist_indexes           20
+  primary_keys           39
+  foreign_keys           58
+  unique_constraints     23
+  check_constraints      87
+  exclusion_constraints  3
+  triggers               5
+  functions              12
+  generated_columns      4
+
+rows per table:
+  building.buildings                                    6
+  building.device_space_assignments                    70
+  building.devices                                     66
+  building.maintenance_actions                         14
+  building.metric_types                                 3
+  building.spaces                                      72
+  building.telemetry                                8,610
+  core.event_audit_log                                  0
+  core.ingestion_batches                                0
+  core.places                                          15
+  core.quarantine_records                               0
+  core.source_registry                                 15
+  core.staging_records                                  0
+  core.study_areas                                      1
+  cross_domain.refresh_log                              3
+  environment.alert_rules                              12
+  environment.alerts                                    7
+  environment.hourly_summaries                        720
+  environment.measurement_types                         6
+  environment.measurements                          8,640
+  environment.stations                                  5
+  mobility.route_stops                                 52
+  mobility.routes                                       3
+  mobility.stops                                      513
+  mobility.trip_stop_events                         3,741
+  mobility.trips                                      440
+  mobility.vehicle_observations                    20,238
+  mobility.vehicles                                    16
+  safety.facilities                                     5
+  safety.incident_status_history                   49,421
+  safety.incident_types                                 6
+  safety.incidents                                 10,006
+  safety.response_drills                            1,998
+  safety.severity_levels                                4
+  tourism.aggregate_visits                             54
+  tourism.attractions                                   9
+  tourism.events                                        7
+  tourism.operating_hours                              69
+  tourism.sample_visits                             6,696

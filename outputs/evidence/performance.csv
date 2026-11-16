@@ -1,0 +1,37 @@
+task,title,rows,median_ms,max_ms,planning_ms,execution_ms,indexes_used,seq_scans
+CORE-1,Places near a point,5,1.01,1.26,0.209,0.261,idx_places_geog,
+CORE-2,Source registry,15,0.61,0.65,0.071,0.11,,source_registry
+CORE-3,Quarantined records,0,0.51,0.87,0.087,0.035,,quarantine_records
+CORE-4,Audit ledger (latest events),5,0.62,0.71,0.085,0.041,,event_audit_log
+DB1-1,Ordered route sequence,11,1.95,2.31,0.63,0.41,,route_stops routes stops
+DB1-2,Trip execution & stop arrivals,11,1.61,1.91,0.524,0.332,uq_trip_stop,stops
+DB1-3,Historical position replay,16,19.08,20.99,0.419,16.966,idx_obs_time,vehicles
+DB1-4,Peak-hour lateness & gap analysis,50,5.7,6.58,1.301,3.107,,routes stops trip_stop_events trips
+DB1-5,Smart Mobility telemetry: candidate stops,15,2.94,3.42,0.346,1.595,idx_obs_time idx_stops_geog,
+DB2-1,Building & address reconciliation,6,1.78,2.17,0.267,0.678,buildings_pkey,places
+DB2-2,Space hierarchy & device registration,14,2.32,3.14,0.735,0.413,,device_space_assignments devices spaces
+DB2-3,Device relocation history,3,1.15,1.65,0.347,0.12,,device_space_assignments spaces
+DB2-4,Missing heartbeat & fault detection,4,3.28,3.77,1.239,0.99,ex_assignment_no_overlap idx_telemetry_device_time spaces_pkey,devices
+DB2-5,VIP facility state retrieval,13,2.72,3.94,1.095,1.286,idx_telemetry_device_time,device_space_assignments devices maintenance_actions metric_types spaces
+DB3-1,Attractions & accessibility metadata,9,28.74,29.25,0.273,26.242,,attractions stops
+DB3-2,Event management & schedule integrity,7,1.72,2.37,0.534,0.312,,attractions events operating_hours
+DB3-3,Official statistics vs. synthetic samples,9,4.4,4.96,0.762,3.334,sample_visits_pkey,aggregate_visits attractions source_registry
+DB3-4,Open attractions near transit,7,1.76,2.39,0.526,0.388,ex_hours_no_overlap idx_attractions_geog stops_stop_number_key,
+DB3-5,Temporal demand & crowd forecasting,4,15.92,20.08,1.9,13.472,idx_events_stop_arrival idx_stops_geog trips_pkey vehicles_pkey,attractions events
+DB4-1,Station registration & unit standards,6,1.66,2.22,0.638,0.166,,alert_rules measurement_types source_registry stations
+DB4-2,Telemetry ingestion & quality flags,6,5.55,6.83,0.777,3.432,uq_measurement,alert_rules measurement_types stations
+DB4-3,Fault handling & late arrivals,7,16.69,17.67,0.974,15.305,,event_audit_log measurement_types measurements quarantine_records stations
+DB4-4,Hourly rollup & threshold alerts,24,2.2,2.98,0.92,1.272,hourly_summaries_pkey,alert_rules alerts measurement_types stations
+DB4-5,Contextual air exposure service,6,5.73,6.73,1.156,3.366,idx_env_stations_geog uq_measurement,alert_rules measurement_types
+DB5-1,Public safety facilities registration,5,31.26,32.45,0.553,32.662,idx_drills_facility,facilities incidents source_registry stops
+DB5-2,Incident creation & severity triage,6,2.0,2.36,0.875,0.241,idx_incidents_reported,facilities incident_types severity_levels
+DB5-3,State machine transitions & drills,5,1.44,1.66,0.504,0.176,idx_history_incident_time,facilities
+DB5-4,Response time analytics by facility,5,50.31,54.44,1.403,58.153,,facilities incident_status_history incidents severity_levels
+DB5-4B,Incident hotspots (spatial clusters),5,114.35,146.68,0.738,118.51,,incidents places
+DB5-5,Smart Mobility hazard avoidance,2,12.1,12.92,1.059,11.461,idx_history_incident_time idx_incidents_reported idx_obs_time idx_stops_geog,incident_types
+X-1,Attractions & events near transit stops,2,1.65,2.33,0.692,0.19,idx_attractions_geog stops_stop_number_key,events
+X-2,Building devices with outdoor air context,26,22.77,25.23,1.1,21.182,uq_measurement,buildings device_space_assignments devices spaces stations
+X-3,Incidents impacting transit & air context,50,6.29,7.45,0.885,4.08,idx_incidents_active idx_stops_geog,alerts incident_types stations
+X-4,Place context cards (materialized view),15,0.78,1.54,0.091,0.132,,mv_place_context
+X-5,Facility response statistics (materialized view),5,1.07,1.94,0.298,0.225,,mv_facility_response_stats
+X-6,Materialized view freshness,3,0.61,0.76,0.123,0.09,,refresh_log

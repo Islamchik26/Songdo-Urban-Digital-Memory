@@ -1,0 +1,4 @@
+query,rows_in_table,index,median_ms_with_index,median_ms_without_index,speedup
+Radius search: GPS fixes within 150 m of a point,1000000,vehicle_observations_geom_idx,56.65,1577.5,28
+Point-in-time replay: last fix of 50 vehicles at T,1000000,vehicle_observations_vehicle_id_observed_at_idx,1.79,8318.9,4658
+Time window: fixes in a 5-minute interval,1000000,vehicle_observations_observed_at_idx,1.58,107.0,68

@@ -1,0 +1,64 @@
+item,original,restored,match
+objects.tables,39,39,True
+objects.views,4,4,True
+objects.materialized_views,3,3,True
+objects.indexes,109,109,True
+objects.gist_indexes,20,20,True
+objects.primary_keys,39,39,True
+objects.foreign_keys,58,58,True
+objects.unique_constraints,23,23,True
+objects.check_constraints,87,87,True
+objects.exclusion_constraints,3,3,True
+objects.triggers,5,5,True
+objects.functions,12,12,True
+objects.generated_columns,4,4,True
+rows.building.buildings,6,6,True
+rows.building.device_space_assignments,70,70,True
+rows.building.devices,66,66,True
+rows.building.maintenance_actions,14,14,True
+rows.building.metric_types,3,3,True
+rows.building.spaces,72,72,True
+rows.building.telemetry,8610,8610,True
+rows.core.event_audit_log,0,0,True
+rows.core.ingestion_batches,0,0,True
+rows.core.places,15,15,True
+rows.core.quarantine_records,0,0,True
+rows.core.source_registry,15,15,True
+rows.core.staging_records,0,0,True
+rows.core.study_areas,1,1,True
+rows.cross_domain.refresh_log,3,3,True
+rows.environment.alert_rules,12,12,True
+rows.environment.alerts,7,7,True
+rows.environment.hourly_summaries,720,720,True
+rows.environment.measurement_types,6,6,True
+rows.environment.measurements,8640,8640,True
+rows.environment.stations,5,5,True
+rows.mobility.route_stops,52,52,True
+rows.mobility.routes,3,3,True
+rows.mobility.stops,513,513,True
+rows.mobility.trip_stop_events,3741,3741,True
+rows.mobility.trips,440,440,True
+rows.mobility.vehicle_observations,20238,20238,True
+rows.mobility.vehicles,16,16,True
+rows.safety.facilities,5,5,True
+rows.safety.incident_status_history,49421,49421,True
+rows.safety.incident_types,6,6,True
+rows.safety.incidents,10006,10006,True
+rows.safety.response_drills,1998,1998,True
+rows.safety.severity_levels,4,4,True
+rows.tourism.aggregate_visits,54,54,True
+rows.tourism.attractions,9,9,True
+rows.tourism.events,7,7,True
+rows.tourism.operating_hours,69,69,True
+rows.tourism.sample_visits,6696,6696,True
+task.DB1-3 result sha256,c2b24a5e34171fc8,c2b24a5e34171fc8,True
+task.DB2-5 result sha256,23c5bdfa4e101cb0,23c5bdfa4e101cb0,True
+task.DB3-4 result sha256,4d3b0913d1f710cd,4d3b0913d1f710cd,True
+task.DB4-4 result sha256,14d1f9e991b92e26,14d1f9e991b92e26,True
+task.DB5-4 result sha256,46366091cc772920,46366091cc772920,True
+task.DB5-5 result sha256,66dab4917739d1d9,66dab4917739d1d9,True
+task.X-1 result sha256,a05e011fdc997d43,a05e011fdc997d43,True
+task.X-3 result sha256,06c8046c3a17c8a9,06c8046c3a17c8a9,True
+behaviour.audit ledger append-only,UPDATE rejected (23001),UPDATE rejected (23001),True
+behaviour.materialized views refresh,3,3,True
+behaviour.exclusion constraint,overlap rejected (23P01),overlap rejected (23P01),True

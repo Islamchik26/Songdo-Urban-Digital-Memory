@@ -1,0 +1,74 @@
+command: python -m unittest -v tests/test_platform.py
+database: songdo_evidence (clean build)
+exit code: 0
+wall time: 12.4 s
+test_midnight_is_written_as_24_00 (tests.test_platform.AirKoreaParsingTests.test_midnight_is_written_as_24_00) ... ok
+test_one_api_row_becomes_six_readings (tests.test_platform.AirKoreaParsingTests.test_one_api_row_becomes_six_readings) ... ok
+test_alert_episodes_from_seed (tests.test_platform.ApiValidationTests.test_alert_episodes_from_seed) ... ok
+test_building_state_and_silent_devices (tests.test_platform.ApiValidationTests.test_building_state_and_silent_devices) ... ok
+test_building_write_endpoints_validate_input (tests.test_platform.ApiValidationTests.test_building_write_endpoints_validate_input) ... ok
+test_console_activity_and_verification (tests.test_platform.ApiValidationTests.test_console_activity_and_verification) ... ok
+test_console_map_endpoints (tests.test_platform.ApiValidationTests.test_console_map_endpoints) ... ok
+test_consumer_digital_twin_replay (tests.test_platform.ApiValidationTests.test_consumer_digital_twin_replay) ... ok
+test_consumer_vip_building_context (tests.test_platform.ApiValidationTests.test_consumer_vip_building_context) ... ok
+test_cross_domain_endpoints (tests.test_platform.ApiValidationTests.test_cross_domain_endpoints) ... ok
+test_environment_read_endpoints (tests.test_platform.ApiValidationTests.test_environment_read_endpoints) ... ok
+test_every_ready_scenario_runs_with_defaults (tests.test_platform.ApiValidationTests.test_every_ready_scenario_runs_with_defaults) ... ok
+test_hazard_zones_geojson (tests.test_platform.ApiValidationTests.test_hazard_zones_geojson) ... ok
+test_health_and_nearby_places (tests.test_platform.ApiValidationTests.test_health_and_nearby_places) ... ok
+test_incident_state_at_time_t (tests.test_platform.ApiValidationTests.test_incident_state_at_time_t) ... ok
+test_ingest_requires_token (tests.test_platform.ApiValidationTests.test_ingest_requires_token) ... ok
+test_invalid_query_returns_422 (tests.test_platform.ApiValidationTests.test_invalid_query_returns_422) ... ok
+test_observation_endpoint_validates_input (tests.test_platform.ApiValidationTests.test_observation_endpoint_validates_input) ... ok
+test_point_in_time_replay (tests.test_platform.ApiValidationTests.test_point_in_time_replay) ... ok
+test_route_sequence_is_gap_free (tests.test_platform.ApiValidationTests.test_route_sequence_is_gap_free) ... ok
+test_safety_write_endpoints_validate_input (tests.test_platform.ApiValidationTests.test_safety_write_endpoints_validate_input) ... ok
+test_scenario_bad_date_range_is_422_not_500 (tests.test_platform.ApiValidationTests.test_scenario_bad_date_range_is_422_not_500) ... ok
+test_scenario_param_validation (tests.test_platform.ApiValidationTests.test_scenario_param_validation) ... ok
+test_tourism_read_endpoints (tests.test_platform.ApiValidationTests.test_tourism_read_endpoints) ... ok
+test_device_cannot_be_in_two_spaces_at_once (tests.test_platform.BuildingDatabaseTests.test_device_cannot_be_in_two_spaces_at_once) ... ok
+test_relocation_closes_old_assignment_and_opens_new (tests.test_platform.BuildingDatabaseTests.test_relocation_closes_old_assignment_and_opens_new) ... ok
+test_room_cannot_have_parent_in_another_building (tests.test_platform.BuildingDatabaseTests.test_room_cannot_have_parent_in_another_building) ... ok
+test_telemetry_adapter_fault_and_range_handling (tests.test_platform.BuildingDatabaseTests.test_telemetry_adapter_fault_and_range_handling) ... ok
+test_parse_time_assumes_korean_time (tests.test_platform.ConsumerTests.test_parse_time_assumes_korean_time) ... ok
+test_publisher_injects_glitch_and_resend (tests.test_platform.ConsumerTests.test_publisher_injects_glitch_and_resend) ... ok
+test_queue_drops_oldest_when_full (tests.test_platform.ConsumerTests.test_queue_drops_oldest_when_full) ... ok
+test_route_driver_stays_on_route (tests.test_platform.ConsumerTests.test_route_driver_stays_on_route) ... ok
+test_uplink_retries_transient_errors_only (tests.test_platform.ConsumerTests.test_uplink_retries_transient_errors_only) ... ok
+test_malformed_and_missing (tests.test_platform.CoordinateValidationTests.test_malformed_and_missing) ... ok
+test_out_of_bounds (tests.test_platform.CoordinateValidationTests.test_out_of_bounds) ... ok
+test_swapped_lat_lon (tests.test_platform.CoordinateValidationTests.test_swapped_lat_lon) ... ok
+test_valid_songdo_coordinate (tests.test_platform.CoordinateValidationTests.test_valid_songdo_coordinate) ... ok
+test_incident_view_follows_the_state_machine (tests.test_platform.CrossDomainDatabaseTests.test_incident_view_follows_the_state_machine) ... ok
+test_materialized_stats_match_the_live_query (tests.test_platform.CrossDomainDatabaseTests.test_materialized_stats_match_the_live_query) ... ok
+test_refresh_is_logged_and_picks_up_new_data (tests.test_platform.CrossDomainDatabaseTests.test_refresh_is_logged_and_picks_up_new_data) ... ok
+test_views_use_spatial_indexes (tests.test_platform.CrossDomainDatabaseTests.test_views_use_spatial_indexes) ... ok
+test_audit_log_is_append_only (tests.test_platform.DatabaseTests.test_audit_log_is_append_only) ... ok
+test_is_in_songdo_function (tests.test_platform.DatabaseTests.test_is_in_songdo_function) ... ok
+test_pipeline_loads_quarantines_and_deduplicates (tests.test_platform.DatabaseTests.test_pipeline_loads_quarantines_and_deduplicates) ... ok
+test_radius_query_can_use_gist_index (tests.test_platform.DatabaseTests.test_radius_query_can_use_gist_index) ... ok
+test_faults_are_quarantined_and_corrections_upserted (tests.test_platform.EnvironmentDatabaseTests.test_faults_are_quarantined_and_corrections_upserted) ... ok
+test_real_airkorea_sample_goes_through_the_pipeline (tests.test_platform.EnvironmentDatabaseTests.test_real_airkorea_sample_goes_through_the_pipeline) ... ok
+test_rollup_ignores_suspect_values_and_alert_lifecycle (tests.test_platform.EnvironmentDatabaseTests.test_rollup_ignores_suspect_values_and_alert_lifecycle) ... ok
+test_station_adapter_handles_the_dmx_dmy_trap (tests.test_platform.EnvironmentDatabaseTests.test_station_adapter_handles_the_dmx_dmy_trap) ... ok
+test_candidate_stop_search_uses_gist_index (tests.test_platform.MobilityDatabaseTests.test_candidate_stop_search_uses_gist_index) ... ok
+test_lateness_and_dwell_are_generated (tests.test_platform.MobilityDatabaseTests.test_lateness_and_dwell_are_generated) ... ok
+test_observation_adapter (tests.test_platform.MobilityDatabaseTests.test_observation_adapter) ... ok
+test_stops_adapter_real_file_rules (tests.test_platform.MobilityDatabaseTests.test_stops_adapter_real_file_rules) ... ok
+test_vehicle_cannot_run_overlapping_trips (tests.test_platform.MobilityDatabaseTests.test_vehicle_cannot_run_overlapping_trips) ... ok
+test_hash_ignores_key_order_and_keeps_utf8 (tests.test_platform.PayloadHashTests.test_hash_ignores_key_order_and_keeps_utf8) ... ok
+test_drills_are_scored_by_the_database (tests.test_platform.SafetyDatabaseTests.test_drills_are_scored_by_the_database) ... ok
+test_full_lifecycle_through_the_state_machine (tests.test_platform.SafetyDatabaseTests.test_full_lifecycle_through_the_state_machine) ... ok
+test_illegal_transitions_are_rejected (tests.test_platform.SafetyDatabaseTests.test_illegal_transitions_are_rejected) ... ok
+test_seeded_history_is_consistent (tests.test_platform.SafetyDatabaseTests.test_seeded_history_is_consistent) ... ok
+test_transition_stream_adapter_quarantines_bad_steps (tests.test_platform.SafetyDatabaseTests.test_transition_stream_adapter_quarantines_bad_steps) ... ok
+test_all_25_team_scenarios_registered (tests.test_platform.ScenarioRegistryTests.test_all_25_team_scenarios_registered) ... ok
+test_ready_scenarios_have_sql (tests.test_platform.ScenarioRegistryTests.test_ready_scenarios_have_sql) ... ok
+test_monthly_totals_and_samples_stay_separate (tests.test_platform.TourismDatabaseTests.test_monthly_totals_and_samples_stay_separate) ... ok
+test_schedule_constraints (tests.test_platform.TourismDatabaseTests.test_schedule_constraints) ... ok
+test_tourism_adapters (tests.test_platform.TourismDatabaseTests.test_tourism_adapters) ... ok
+
+----------------------------------------------------------------------
+Ran 65 tests in 10.280s
+
+OK

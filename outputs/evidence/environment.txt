@@ -1,0 +1,29 @@
+generated_at: 2026-11-16T18:38:06+09:00
+git_commit: 10a135e (with uncommitted changes)
+os: Windows 11 (10.0.22616)
+python: 3.14.4
+postgresql_server: PostgreSQL 18.3 on x86_64-windows, compiled by msvc-19.44.35225, 64-bit
+postgis: POSTGIS="3.7.0 3.7.0" [EXTENSION] PGSQL="180" GEOS="3.14.1dev-CAPI-1.20.4" PROJ="9.8.1 NETWORK_ENABLED=OFF URL_ENDPOINT=https://cdn.proj.org USER_WRITABLE_DIRECTORY=C:\Windows\ServiceProfiles\NetworkService\AppData\Local/proj DATABASE_PATH=C:\Program Files\PostgreSQL\18\share\contrib\postgis-3.7\proj\proj.db" (compiled against PROJ 9.8.1) LIBXML="2.12.5" LIBJSON="0.16" LIBPROTOBUF="1.2.1" WAGYU="0.5.0 (Internal)"
+psql: psql (PostgreSQL) 18.3
+pg_dump: pg_dump (PostgreSQL) 18.3
+pg_restore: pg_restore (PostgreSQL) 18.3
+node: v24.15.0
+python_packages:
+  fastapi 0.162.7
+  uvicorn 0.54.0
+  pydantic 2.14.3
+  psycopg 3.3.9
+  psycopg-pool 3.3.3
+  python-dotenv 1.2.4
+  httpx 0.28.1
+ui_packages:
+  leaflet 1.9.4
+  react 19.3.1
+  react-dom 19.3.1
+  @types/leaflet 1.9.20
+  @types/react 19.3.0
+  @types/react-dom 19.3.0
+  @vitejs/plugin-react 5.2.0
+  typescript 5.9.3
+  vite 7.3.8
+database: songdo_evidence (disposable, built by this script)
