@@ -11,7 +11,7 @@ project task.
 | Core schema (`sql/00`, `sql/01`): source registry, places, staging, quarantine, audit ledger | Done |
 | Ingestion pipeline: validate → SHA-256 dedup → quarantine → load → audit | Done (core places) |
 | API: `/health`, `/api/v1/core/*`, `/api/v1/scenarios` | Done |
-| Web console: pick a task, set parameters, run it, see rows + SQL + query plan | Done (shell) |
+| Web console (`ui/`): tasks, city map with time slider and live mode, ingestion playground, verification | Done |
 | DB1 Mobility (`sql/02`): schema, real stop data, fixtures, 5 scenarios, `/api/v1/mobility/*` | Done |
 | DB2 Smart Building (`sql/03`): schema, fixtures, 5 scenarios, `/api/v1/building/*` | Done |
 | DB3 Tourism (`sql/04`): schema, fixtures, 5 scenarios, `/api/v1/tourism/*` | Done |
@@ -19,7 +19,7 @@ project task.
 | DB5 Safety & Incident (`sql/06`): schema, state machine, fixtures, 6 scenarios, `/api/v1/safety/*` | Done |
 | Cross-domain federation (`sql/07`): 3 views, 3 materialized views with a logged refresh policy, `/api/v1/cross/*` | Done |
 | Consumers: telemetry node, VIP building client, digital-twin replay (`consumers/`) | Done |
-| UI map and ingestion forms, LaTeX handbook | Not started |
+| Reproducibility evidence (`outputs/evidence/`), LaTeX handbook | Not started |
 
 ## Setup (native PostgreSQL, no Docker)
 
@@ -96,6 +96,20 @@ npm run dev        # http://localhost:5173 (needs the API running on :8000)
 
 `npm run build` writes `ui/dist`; when that folder exists, FastAPI serves the console at
 `http://127.0.0.1:8000/` so the whole demo runs from one process.
+
+The console has four pages:
+
+| Page | What it does |
+|---|---|
+| **Tasks** | All 36 tasks. Pick one, change its parameters, run it: rows, the SQL that ran, the query plan, and a map for results with coordinates. |
+| **City map** | Stops, routes, stations, attractions, buildings, safety facilities. A time slider rebuilds the city at any moment from history: vehicles, incidents in their status at that time, PM2.5 per station, air alerts. **Live** mode refreshes every 2 s. |
+| **Ingest** | Forms for GPS, building sensor, air reading, incident report and status change, with good and bad presets. Shows the outcome (loaded, quarantined, duplicate, rejected) and the batch, quarantine and audit rows written. |
+| **Verify** | 28 live checks (schemas, rows per domain, views, materialized view freshness, ledger triggers, indexes, constraints, quarantine, provenance, backup) and a button that runs the test suite. |
+
+Links can open a page in a given state: `#/tasks?task=DB5-2&run=1&view=map`, `#/map?t=18:20`,
+`#/map?live=1`. The map background comes from OpenStreetMap and needs internet; the data layers
+work without it. The write forms and the test button send the token typed in the X-API-Token box
+(default `songdo-dev-token`, the value in `.env.example`); change it there if your `.env` sets another.
 
 **7. Downstream consumers.** Three programs that use the platform only through its API, never
 through the database. Each one uses the server on `SONGDO_API_URL` (default

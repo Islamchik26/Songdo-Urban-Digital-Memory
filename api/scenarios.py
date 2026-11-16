@@ -233,7 +233,7 @@ _SCENARIOS: list[Scenario] = [
         "ready",
         """
         SELECT o.observation_id, o.vehicle_id, o.observed_at, o.speed_kmh::float8 AS speed_kmh,
-               c.stop_id, c.stop_name_ko, c.distance_m
+               c.stop_id, c.stop_name_ko, c.distance_m, c.lon, c.lat
         FROM (
             SELECT observation_id, vehicle_id, observed_at, speed_kmh, geom
             FROM mobility.vehicle_observations
@@ -242,7 +242,7 @@ _SCENARIOS: list[Scenario] = [
             LIMIT %(last_n)s
         ) o
         CROSS JOIN LATERAL (
-            SELECT s.stop_id, s.stop_name_ko,
+            SELECT s.stop_id, s.stop_name_ko, ST_X(s.geom) AS lon, ST_Y(s.geom) AS lat,
                    ROUND(ST_Distance(o.geom::geography, s.geom::geography)::numeric, 1)::float8 AS distance_m
             FROM mobility.stops s
             WHERE ST_DWithin(o.geom::geography, s.geom::geography, %(radius_m)s)
@@ -391,7 +391,8 @@ _SCENARIOS: list[Scenario] = [
         """
         SELECT a.attraction_id, a.attraction_name_ko, a.category, a.is_wheelchair_accessible,
                a.has_parking, a.parking_spaces, a.admission_fee_krw,
-               n.stop_name_ko AS nearest_stop, n.distance_m AS stop_distance_m
+               n.stop_name_ko AS nearest_stop, n.distance_m AS stop_distance_m,
+               ST_X(a.geom) AS lon, ST_Y(a.geom) AS lat
         FROM tourism.attractions a
         LEFT JOIN LATERAL (
             SELECT s.stop_name_ko,
@@ -467,7 +468,7 @@ _SCENARIOS: list[Scenario] = [
                TO_CHAR(h.opens_at, 'HH24:MI') AS opens_at, TO_CHAR(h.closes_at, 'HH24:MI') AS closes_at,
                a.is_wheelchair_accessible, a.has_parking,
                ROUND(ST_Distance(a.geom::geography, st.geom::geography)::numeric, 1)::float8 AS distance_m,
-               st.stop_name_ko AS from_stop
+               st.stop_name_ko AS from_stop, ST_X(a.geom) AS lon, ST_Y(a.geom) AS lat
         FROM mobility.stops st
         JOIN tourism.attractions a
           ON ST_DWithin(a.geom::geography, st.geom::geography, %(radius_m)s)
@@ -902,7 +903,7 @@ _SCENARIOS: list[Scenario] = [
         SELECT name_ko, category, nearest_stop_name, nearest_stop_m::float8 AS nearest_stop_m, stops_within_500m,
                nearest_env_station, nearest_env_station_m::float8 AS nearest_env_station_m,
                nearest_fire_unit, nearest_fire_unit_m::float8 AS nearest_fire_unit_m,
-               nearest_police_unit, nearest_police_unit_m::float8 AS nearest_police_unit_m
+               nearest_police_unit, nearest_police_unit_m::float8 AS nearest_police_unit_m, lon, lat
         FROM cross_domain.mv_place_context
         WHERE %(category)s = '' OR category = %(category)s
         ORDER BY name_ko

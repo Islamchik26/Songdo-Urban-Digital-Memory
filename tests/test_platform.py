@@ -351,6 +351,37 @@ class ApiValidationTests(unittest.TestCase):
                          {"mv_facility_response_stats", "mv_stop_hourly_service", "mv_place_context"})
 
     @needs_db
+    def test_console_map_endpoints(self):
+        layers = self.client.get("/api/v1/system/map/layers").json()
+        self.assertEqual(len(layers["stops"]), 513)
+        self.assertEqual({r["route_number"] for r in layers["routes"]}, {"8", "AV-1", "SD-A"})
+        self.assertTrue(all(len(r["path"]) == len(r["stop_names"]) >= 2 for r in layers["routes"]))
+        self.assertEqual(len(layers["stations"]), 5)
+
+        def frame(t):
+            return self.client.get("/api/v1/system/map/frame", params={"as_of": t}).json()
+
+        morning = frame("2026-10-02T08:10:00+09:00")
+        self.assertEqual([i["status"] for i in morning["incidents"]], ["DISPATCHED"])   # status at T, not today
+        self.assertTrue(morning["vehicles"])
+        self.assertTrue(all(v["staleness_seconds"] <= 120 for v in morning["vehicles"]))
+        self.assertEqual(len(morning["air"]), 5)
+        self.assertEqual(frame("2026-10-02T18:30:00+09:00")["incidents"].__len__(), 2)
+        night = frame("2026-10-02T03:00:00+09:00")
+        self.assertEqual((night["vehicles"], night["incidents"]), ([], []))
+        self.assertEqual(self.client.get("/api/v1/system/map/frame", params={"as_of": "yesterday"}).status_code, 422)
+
+    @needs_db
+    def test_console_activity_and_verification(self):
+        activity = self.client.get("/api/v1/system/activity", params={"limit": 3}).json()
+        self.assertLessEqual(len(activity["audit"]), 3)
+        self.assertGreater(activity["totals"]["quarantined"], 0)
+        report = self.client.get("/api/v1/system/verification").json()
+        self.assertEqual(report["summary"]["FAIL"], 0, [c for c in report["checks"] if c["status"] == "FAIL"])
+        self.assertGreaterEqual(len(report["checks"]), 25)
+        self.assertEqual(self.client.post("/api/v1/system/run-tests").status_code, 401)   # token required
+
+    @needs_db
     def test_consumer_vip_building_context(self):
         ctx = get_context("BLD_G_TOWER", "2026-10-02T10:00:00+09:00", client=self.client)
         self.assertEqual(ctx["building"]["building_id"], "BLD_G_TOWER")
