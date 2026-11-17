@@ -20,7 +20,8 @@ project task.
 | Cross-domain federation (`sql/07`): 3 views, 3 materialized views with a logged refresh policy, `/api/v1/cross/*` | Done |
 | Consumers: telemetry node, VIP building client, digital-twin replay (`consumers/`) | Done |
 | Evidence kit (`scripts/evidence.py` → `outputs/evidence/`): clean build, restore, acceptance, performance, API, browser | Done |
-| LaTeX handbook | Not started |
+| Live deployment (Neon + Render, see `DEPLOY.md`) | Done |
+| LaTeX handbook (`main.tex` → `main.pdf`, XeLaTeX) | Done |
 
 ## Setup (native PostgreSQL, no Docker)
 
@@ -176,6 +177,15 @@ results to `outputs/evidence/` (start with its `README.md`):
 
 Your working database is never touched; the two evidence databases are dropped at the end
 (`--keep` keeps them). The backup file goes to `outputs/` and is not committed.
+
+## Handbook
+
+`main.tex` is the project handbook: architecture, sources, every scenario, API, consumers,
+console, evidence, performance, recovery, deployment, limitations and defense questions. It
+compiles with **XeLaTeX** (on Overleaf: Menu → Compiler → XeLaTeX) and uses only TeX Live
+packages. To include the screenshots, upload `outputs/evidence/screenshots/` with the same
+folder structure; without them the figures show a placeholder. Compile twice and commit
+`main.pdf` next to it.
 
 ## Backup and restore
 

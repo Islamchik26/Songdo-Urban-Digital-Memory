@@ -11,3 +11,9 @@ docs
 outputs
 *.backup
 *.ipynb
+main.tex
+main.pdf
+*.aux
+*.log
+*.toc
+*.out

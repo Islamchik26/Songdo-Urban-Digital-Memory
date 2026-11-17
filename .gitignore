@@ -12,3 +12,13 @@ outputs/*
 # raw downloads are large; record file name + SHA-256 in source_registry.csv instead
 data/raw/*
 !data/raw/README.md
+# LaTeX build files (main.tex and the compiled main.pdf are committed)
+/*.aux
+/*.log
+/*.toc
+/*.out
+/*.lol
+/*.fls
+/*.fdb_latexmk
+/*.synctex.gz
+/*.xdv
