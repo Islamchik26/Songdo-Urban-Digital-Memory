@@ -105,7 +105,7 @@ The console has four pages:
 |---|---|
 | **Tasks** | All 36 tasks. Pick one, change its parameters, run it: rows, the SQL that ran, the query plan, and a map for results with coordinates. |
 | **City map** | Stops, routes, stations, attractions, buildings, safety facilities. A time slider rebuilds the city at any moment from history: vehicles, incidents in their status at that time, PM2.5 per station, air alerts. **Live** mode refreshes every 2 s. |
-| **Ingest** | Forms for GPS, building sensor, air reading, incident report and status change, with good and bad presets. Shows the outcome (loaded, quarantined, duplicate, rejected) and the batch, quarantine and audit rows written. |
+| **Ingest** | Forms for a new place, GPS, building sensor, device relocation, a new attraction, air reading, incident report and status change, with good and bad presets. Shows the outcome (loaded, quarantined, duplicate, rejected) and the batch, quarantine and audit rows written. |
 | **Verify** | 28 live checks (schemas, rows per domain, views, materialized view freshness, ledger triggers, indexes, constraints, quarantine, provenance, backup) and a button that runs the test suite. |
 
 Links can open a page in a given state: `#/tasks?task=DB5-2&run=1&view=map`, `#/map?t=18:20`,
