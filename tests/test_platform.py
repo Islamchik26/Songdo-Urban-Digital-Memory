@@ -923,15 +923,18 @@ class CrossDomainDatabaseTests(unittest.TestCase):
             self.assertLessEqual(abs(a - b), 1)                                    # averages agree to the second
 
     def test_refresh_is_logged_and_picks_up_new_data(self):
-        before = self.conn.execute(
+        # The view may already be stale (places added through the API since the last refresh),
+        # so the expected size after a refresh comes from the base table, not from the view.
+        mv_before = self.conn.execute(
             "SELECT count(*) FROM cross_domain.mv_place_context").fetchone()[0]
+        places_before = self.conn.execute("SELECT count(*) FROM core.places").fetchone()[0]
         self.conn.execute(
             """INSERT INTO core.places (place_id, name_ko, category, geom, provenance)
                VALUES ('PLC_TEST', '테스트 장소', 'TEST', ST_SetSRID(ST_MakePoint(126.64, 37.39), 4326), 'SRC_CORE_01')""")
         self.assertEqual(self.conn.execute(
-            "SELECT count(*) FROM cross_domain.mv_place_context").fetchone()[0], before)   # stale until refreshed
+            "SELECT count(*) FROM cross_domain.mv_place_context").fetchone()[0], mv_before)   # stale until refreshed
         refreshed = self.conn.execute("SELECT view_name, row_count FROM cross_domain.refresh_materialized_views()").fetchall()
-        self.assertEqual(dict(refreshed)["mv_place_context"], before + 1)
+        self.assertEqual(dict(refreshed)["mv_place_context"], places_before + 1)
         logged = self.conn.execute(
             """SELECT count(*) FROM cross_domain.refresh_log
                WHERE refreshed_at >= transaction_timestamp()""").fetchone()[0]
