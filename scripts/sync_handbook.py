@@ -37,6 +37,9 @@ def main() -> None:
     readme = (EV / "README.md").read_text(encoding="utf-8")
     tex = TEX.read_text(encoding="utf-8")
 
+    if re.search(r"\| (FAIL|WARN) \|", readme.split("## Remediation")[0]):
+        sys.exit("The latest evidence run has a gate that did not pass (see outputs/evidence/README.md); "
+                 "fix it and rerun scripts/evidence.py before syncing the handbook.")
     boot = float(re.search(r"Boot / DDL / seed \| .*? \| PASS \| 9 files, exit 0, ([\d.]+) s", readme).group(1))
     tests, test_s = re.search(r"`(\d+)` tests on the clean database: OK \(([\d.]+) s\)", readme).groups()
     api_ok, api_all = re.search(r"\| API \| .*? \| PASS \| (\d+)/(\d+) cases", readme).groups()

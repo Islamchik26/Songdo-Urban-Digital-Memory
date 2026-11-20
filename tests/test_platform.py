@@ -237,7 +237,8 @@ class ApiValidationTests(unittest.TestCase):
     def test_task_charts_match_their_columns_and_tell_a_story(self):
         """Every column a chart spec names exists in the task's real result, and the headline is produced."""
         top_keys = ("label", "sub", "path", "detail", "kind", "start", "end", "current", "time", "state",
-                    "unit_column", "value", "duration", "actor")
+                    "unit_column", "value", "duration", "actor", "card_title", "subtitle", "group", "distinct",
+                    "time_columns", "note_column")
         nested_keys = ("column", "min", "max", "unit_column")
 
         def columns(spec):
@@ -259,18 +260,21 @@ class ApiValidationTests(unittest.TestCase):
             r = self.client.post(f"/api/v1/scenarios/{task_id}/run", json={"params": {}})
             self.assertEqual(r.status_code, 200, task_id)
             body = r.json()
-            self.assertTrue(body["rows"], task_id)
             self.assertEqual(body["viz"], specs)
+            if not body["rows"]:
+                # quarantine and audit rows only come from ingestion: empty on a freshly built database
+                self.assertIn(task_id, {"CORE-3", "CORE-4"}, f"{task_id} returned no rows")
+                self.assertIsNone(body["story"], task_id)          # no rows, no headline
+                continue
             present = set(body["rows"][0])
             for spec in specs:
                 self.assertLessEqual(columns(spec), present, (task_id, spec["title"]))
             if task_id in visuals.STORY:
                 self.assertTrue(body["story"]["headline"], task_id)
                 self.assertTrue(body["story"]["stats"], task_id)
-        # a task without charts still runs and simply has none
-        plain = self.client.post("/api/v1/scenarios/CORE-2/run", json={"params": {}}).json()
-        self.assertIsNone(plain["viz"])
-        self.assertIsNone(plain["story"])
+        # every registered task now has charts and a headline
+        self.assertEqual(set(visuals.VIZ), set(SCENARIOS))
+        self.assertEqual(set(visuals.STORY), set(SCENARIOS))
 
     def test_a_broken_headline_never_breaks_the_task(self):
         with self.assertLogs("api.visuals", level="ERROR"):                      # logged, not raised

@@ -1,6 +1,6 @@
 # Evidence kit · Songdo Urban Digital Memory
 
-Generated 2026-11-21T03:29:25+09:00 by `python scripts/evidence.py` from commit `bacfd72 (with uncommitted changes)`.
+Generated 2026-11-21T04:02:30+09:00 by `python scripts/evidence.py` from commit `597bdad (with uncommitted changes)`.
 Every number below was produced by that run on a **new, disposable database** (`songdo_evidence`) built from this repository, not on a developer's working database. Rerun the command to reproduce.
 
 ## Gates
@@ -11,7 +11,7 @@ The gates of the midterm assessment ("Verification and staged remediation"), eac
 |---|---|---|---|
 | PostgreSQL | Connection and version | PASS | PostgreSQL 18.3 on x86_64-windows |
 | PostGIS | Extension | PASS | 3.7.0 |
-| Boot / DDL / seed | psql ON_ERROR_STOP on a new database | PASS | 9 files, exit 0, 12.8 s |
+| Boot / DDL / seed | psql ON_ERROR_STOP on a new database | PASS | 9 files, exit 0, 11.3 s |
 | Schema | Objects created | PASS | 39 tables, 4 views, 3 materialized views, 3 exclusion constraints, 5 triggers |
 | Quarantine | Bad input stored with a reason, API path included | PASS | CORE-1, CORE-2, api_contract.csv |
 | GiST | Spatial index used | PASS | 8 tasks use a GiST index; see index_comparison.csv |
@@ -29,7 +29,7 @@ The gates of the midterm assessment ("Verification and staged remediation"), eac
 | P0 Hash-only write | Staging, domain row and audit in one transaction; invalid input stored with a reason | PASS: audit step forced to fail -> 0 observation rows, 0 audit rows, staging REJECTED, payload quarantined with the error; batch still completes. Concurrent duplicates: 1 stored row(s). |
 | P1 HTTP status / timestamp | Swapped coordinates and malformed time return 422; a valid request persists once | swapped -> 422, malformed time -> 422, no offset -> 422; valid -> 202 LOADED (1 stored row(s)), 3 retries -> DUPLICATE |
 | P1 Assignment history | Exclusion rule in a versioned migration; overlap 23P01; adjacent succeeds | sql/03 `ex_assignment_no_overlap`. 3 consecutive assignments, each ends where the next starts; overlap rejected (23P01); adjacent interval accepted; inverted interval rejected (23514); concurrent overlap: see DB2-3-RACE. Race: two connections insert overlapping intervals at the same time: the second waited 0.50 s for the first to commit, then failed with ExclusionViolation (23P01); 1 row stored |
-| P1 Safety progression | Lock, validate and append atomically; REPORTED -> RESOLVED rejected | sql/06 `transition_incident` (SELECT ... FOR UPDATE) and guard trigger. REPORTED -> RESOLVED rejected (23514); plain UPDATE bypassing the function rejected by trigger (23514); deleting history rejected (23001); accepted DISPATCHED -> status and history row written together (2 rows); concurrent transitions: see DB5-3-RACE. Race: two dispatches of one REPORTED incident at the same time: the second waited 0.50 s on the row lock (SELECT ... FOR UPDATE), then saw DISPATCHED and failed with CheckViolation (23514); history has exactly one DISPATCHED row |
+| P1 Safety progression | Lock, validate and append atomically; REPORTED -> RESOLVED rejected | sql/06 `transition_incident` (SELECT ... FOR UPDATE) and guard trigger. REPORTED -> RESOLVED rejected (23514); plain UPDATE bypassing the function rejected by trigger (23514); deleting history rejected (23001); accepted DISPATCHED -> status and history row written together (2 rows); concurrent transitions: see DB5-3-RACE. Race: two dispatches of one REPORTED incident at the same time: the second waited 0.51 s on the row lock (SELECT ... FOR UPDATE), then saw DISPATCHED and failed with CheckViolation (23514); history has exactly one DISPATCHED row |
 | P1 Time and spatial paths | Bind T, stable ties, indexed geography, valid GeoJSON, boundary distances | T bound as a parameter; 16 vehicles, none observed after T; a later packet leaves the answer for T unchanged; same (vehicle, instant) stored once (UNIQUE), so no ties to break. same packet sent 3 times -> 1 stored row; radius 400 m around stop ICB365000721 (next stop 2734 m away): point at 399 m returns it (distance 399.0 m), point at 401 m does not. GeoJSON: FeatureCollection, 513 Point features, all inside the bbox: True |
 | Federation | Nearest station by distance; alert only with a distance rule | rows [142, 132, 107]; transit x tourism max distance 498.1 m (cap 500); incident x stops max 599.9 m (cap 600); building station = true nearest for every device; alerts only from the incident's nearest station (0 exceptions) |
 
@@ -66,7 +66,7 @@ One executed check per scenario, written against the "Required acceptance" colum
 | DB5-1 | Public Safety Facilities Registration | Source payload and coordinate bounds | LIMITED | 5 facilities, all inside the Songdo bounding box, each with nearest stop and workload; location provenance shown as ['CURATED_MANUAL']: coordinates are placeholders, not yet checked against an official facility payload |
 | DB5-2 | Incident Creation & Severity Triage | Create incident; invalid severity rejected | PASS | valid report -> REPORTED with 1 history row; severity 'URGENT' -> quarantined (SCHEMA_VIOLATION); API returns 422 for it (see api_contract.csv); triage lists 6 incidents most urgent first with SLA {'CRITICAL': 300, 'HIGH': 420, 'MEDIUM': 600, 'LOW': 900} |
 | DB5-3 | State Machine Transitions & Drills | Illegal UPDATE rejected; atomic history | PASS | REPORTED -> RESOLVED rejected (23514); plain UPDATE bypassing the function rejected by trigger (23514); deleting history rejected (23001); accepted DISPATCHED -> status and history row written together (2 rows); concurrent transitions: see DB5-3-RACE |
-| DB5-3-RACE | State Machine Transitions & Drills | Row lock: concurrent transitions cannot both win | PASS | two dispatches of one REPORTED incident at the same time: the second waited 0.50 s on the row lock (SELECT ... FOR UPDATE), then saw DISPATCHED and failed with CheckViolation (23514); history has exactly one DISPATCHED row |
+| DB5-3-RACE | State Machine Transitions & Drills | Row lock: concurrent transitions cannot both win | PASS | two dispatches of one REPORTED incident at the same time: the second waited 0.51 s on the row lock (SELECT ... FOR UPDATE), then saw DISPATCHED and failed with CheckViolation (23514); history has exactly one DISPATCHED row |
 | DB5-4 | Response Time Analytics & Hotspots | Durations asserted; reproducible cluster membership | PASS | 송도2지구대: 1201 incidents, average response 260 s = independent recomputation 260 s; DBSCAN hotspots identical on two runs (5 clusters, largest 1440 incidents) |
 | DB5-5 | Smart Mobility Hazard Avoidance | Active restriction geometry published; resolved zones expire | PASS | 18:30: fire zone published as a closed GeoJSON Polygon (33 points, ring at 300 m for a 300 m restriction, 1 stops inside); after RESOLVED at 19:00 it is gone at 19:30 but still shown when replaying 18:30 |
 | X-VIEWS | Cross-domain federation | Three views with live data, distance caps and nearest-station rule | PASS | rows [142, 132, 107]; transit x tourism max distance 498.1 m (cap 500); incident x stops max 599.9 m (cap 600); building station = true nearest for every device; alerts only from the incident's nearest station (0 exceptions) |
@@ -80,38 +80,38 @@ Totals: 29 PASS, 3 LIMITED, 0 FAIL (25 of 25 scenarios have a dedicated check; f
 
 | File | Exit | ms | Size |
 |---|---|---|---|
-| sql/00_init_database.sql | 0 | 1086 | 3 KB |
-| sql/01_core_schema.sql | 0 | 193 | 11 KB |
-| sql/02_db1_mobility.sql | 0 | 182 | 9 KB |
-| sql/03_db2_building.sql | 0 | 300 | 10 KB |
-| sql/04_db3_tourism.sql | 0 | 150 | 7 KB |
-| sql/05_db4_environment.sql | 0 | 181 | 12 KB |
-| sql/06_db5_safety.sql | 0 | 185 | 14 KB |
-| sql/07_cross_domain_views.sql | 0 | 175 | 13 KB |
-| fixtures/seed_data.sql | 0 | 10221 | 8602 KB |
+| sql/00_init_database.sql | 0 | 912 | 3 KB |
+| sql/01_core_schema.sql | 0 | 160 | 11 KB |
+| sql/02_db1_mobility.sql | 0 | 164 | 9 KB |
+| sql/03_db2_building.sql | 0 | 246 | 10 KB |
+| sql/04_db3_tourism.sql | 0 | 127 | 7 KB |
+| sql/05_db4_environment.sql | 0 | 146 | 12 KB |
+| sql/06_db5_safety.sql | 0 | 253 | 14 KB |
+| sql/07_cross_domain_views.sql | 0 | 238 | 13 KB |
+| fixtures/seed_data.sql | 0 | 8902 | 8602 KB |
 
 Objects: 39 tables, 4 views, 3 materialized views, 109 indexes, 20 gist indexes, 39 primary keys, 58 foreign keys, 23 unique constraints, 87 check constraints, 3 exclusion constraints, 5 triggers, 12 functions, 4 generated columns.
 Rows: 111,543 in 39 tables (per table in `schema_inventory.csv`).
 
 ## Backup and restore
 
-`pg_dump -Fc` (2.6 MB, 0.9 s) then `pg_restore --exit-on-error` into `songdo_evidence_restore` (4.2 s). **63 of 63 comparisons identical**: every object count, every table's row count, the result hash of 8 tasks, and behaviour (ledger still append-only, exclusion constraint still enforced, materialized views refresh).
+`pg_dump -Fc` (2.5 MB, 1.0 s) then `pg_restore --exit-on-error` into `songdo_evidence_restore` (4.0 s). **63 of 63 comparisons identical**: every object count, every table's row count, the result hash of 8 tasks, and behaviour (ledger still append-only, exclusion constraint still enforced, materialized views refresh).
 
 ## Tests
 
-`74` tests on the clean database: OK (8.352 s). Full verbose output in `test_results.txt`.
+`74` tests on the clean database: OK (9.314 s). Full verbose output in `test_results.txt`.
 
 ## Performance
 
 ### Index versus no index at scale (1,000,000 GPS rows)
 
-A synthetic copy of the GPS table with the same columns and index definitions, filled with 1,000,000 rows (500 vehicles x 2,000 fixes, fixed random seed; built in 14.6 s, then dropped). Median of 5 runs with indexes, 3 runs with index scans disabled.
+A synthetic copy of the GPS table with the same columns and index definitions, filled with 1,000,000 rows (500 vehicles x 2,000 fixes, fixed random seed; built in 17.0 s, then dropped). Median of 5 runs with indexes, 3 runs with index scans disabled.
 
 | Query | Index used | ms with index | ms without | Speed-up |
 |---|---|---|---|---|
-| Radius search: GPS fixes within 150 m of a point | vehicle_observations_geom_idx | 141.8 | 893.2 | 6x |
-| Point-in-time replay: last fix of 50 vehicles at T | vehicle_observations_vehicle_id_observed_at_idx | 1.39 | 4739.7 | 3399x |
-| Time window: fixes in a 5-minute interval | vehicle_observations_observed_at_idx | 1.84 | 138.4 | 75x |
+| Radius search: GPS fixes within 150 m of a point | vehicle_observations_geom_idx | 44.7 | 879.2 | 20x |
+| Point-in-time replay: last fix of 50 vehicles at T | vehicle_observations_vehicle_id_observed_at_idx | 0.81 | 4630.6 | 5693x |
+| Time window: fixes in a 5-minute interval | vehicle_observations_observed_at_idx | 1.31 | 65.6 | 50x |
 
 ### Index versus no index on the fixture data
 
@@ -119,11 +119,11 @@ The same comparison on the project's own tables (513 stops, about 20,000 GPS row
 
 | Query | Table | Planner choice | Index | ms (planner) | ms (no index) | Speed-up |
 |---|---|---|---|---|---|---|
-| Stops within 1000 m (starter notebook, module 19) | mobility.stops, 513 rows | index | idx_stops_geog | 1.063 | 2.441 | 2.3x |
-| GPS points within 150 m of a point | mobility.vehicle_observations | index | idx_obs_geog | 7.674 | 53.782 | 7.0x |
-| Each vehicle's last position at T (point-in-time replay) | mobility.vehicle_observations | index | idx_obs_time vehicles_pkey | 1.249 | 51.625 | 41.3x |
-| Audit history of one entity | core.event_audit_log | index | idx_audit_entity | 0.275 | 0.385 | 1.4x |
-| Status history of one incident | safety.incident_status_history | index | idx_history_incident_time | 0.317 | 5.779 | 18.2x |
+| Stops within 1000 m (starter notebook, module 19) | mobility.stops, 513 rows | index | idx_stops_geog | 0.985 | 2.119 | 2.2x |
+| GPS points within 150 m of a point | mobility.vehicle_observations | index | idx_obs_geog | 7.547 | 60.674 | 8.0x |
+| Each vehicle's last position at T (point-in-time replay) | mobility.vehicle_observations | index | uq_obs_vehicle_time vehicles_pkey | 0.808 | 60.875 | 75.3x |
+| Audit history of one entity | core.event_audit_log | index | idx_audit_entity | 0.336 | 0.523 | 1.6x |
+| Status history of one incident | safety.incident_status_history | index | idx_history_incident_time | 0.356 | 6.394 | 18.0x |
 
 ### Every task
 
@@ -131,42 +131,42 @@ Median of 7 runs after a warm-up, default parameters.
 
 | Task | Rows | Median ms | Execution ms | Indexes used | Seq scans |
 |---|---|---|---|---|---|
-| CORE-1 | 5 | 1.06 | 0.143 | idx_places_geog | — |
-| CORE-2 | 15 | 0.43 | 0.054 | — | source_registry |
-| CORE-3 | 0 | 0.33 | 0.055 | — | quarantine_records |
-| CORE-4 | 5 | 0.49 | 0.05 | — | event_audit_log |
-| DB1-1 | 11 | 1.58 | 0.538 | — | route_stops routes stops |
-| DB1-2 | 11 | 1.42 | 0.293 | uq_trip_stop | stops |
-| DB1-3 | 16 | 15.57 | 13.695 | idx_obs_time | vehicles |
-| DB1-4 | 50 | 4.64 | 2.506 | — | routes stops trip_stop_events trips |
-| DB1-5 | 15 | 2.62 | 1.259 | idx_obs_time idx_stops_geog | — |
-| DB2-1 | 6 | 1.57 | 0.658 | buildings_pkey | places |
-| DB2-2 | 14 | 2.1 | 0.315 | — | device_space_assignments devices spaces |
-| DB2-3 | 3 | 1.12 | 0.13 | — | device_space_assignments spaces |
-| DB2-4 | 4 | 2.67 | 1.256 | ex_assignment_no_overlap idx_telemetry_device_time idx_telemetry_time spaces_pkey | devices |
-| DB2-5 | 13 | 2.61 | 0.69 | idx_telemetry_device_time | device_space_assignments devices maintenance_actions metric_types spaces |
-| DB3-1 | 9 | 21.09 | 19.709 | — | attractions stops |
-| DB3-2 | 7 | 1.59 | 0.27 | — | attractions events operating_hours |
-| DB3-3 | 9 | 3.44 | 2.43 | sample_visits_pkey | aggregate_visits attractions source_registry |
-| DB3-4 | 7 | 1.59 | 0.289 | ex_hours_no_overlap idx_attractions_geog stops_stop_number_key | — |
-| DB3-5 | 4 | 13.66 | 10.596 | idx_events_stop_arrival idx_stops_geog trips_pkey vehicles_pkey | attractions events |
-| DB4-1 | 6 | 1.33 | 0.478 | — | alert_rules measurement_types source_registry stations |
-| DB4-2 | 6 | 4.93 | 3.284 | uq_measurement | alert_rules measurement_types stations |
-| DB4-3 | 7 | 12.95 | 10.727 | idx_audit_entity | measurement_types measurements quarantine_records stations |
-| DB4-4 | 24 | 3.0 | 0.731 | hourly_summaries_pkey | alert_rules alerts measurement_types stations |
-| DB4-5 | 6 | 4.59 | 3.133 | idx_env_stations_geog uq_measurement | alert_rules measurement_types |
-| DB5-1 | 5 | 28.43 | 28.843 | idx_drills_facility | facilities incidents source_registry stops |
-| DB5-2 | 6 | 1.99 | 0.253 | idx_incidents_reported | facilities incident_types severity_levels |
-| DB5-3 | 5 | 1.49 | 0.181 | idx_history_incident_time | facilities |
-| DB5-4 | 5 | 40.61 | 40.956 | — | facilities incident_status_history incidents severity_levels |
-| DB5-4B | 5 | 96.0 | 102.739 | — | incidents places |
-| DB5-5 | 2 | 10.93 | 8.334 | idx_history_incident_time idx_incidents_reported idx_obs_time idx_stops_geog | incident_types |
-| X-1 | 2 | 1.63 | 0.382 | idx_attractions_geog stops_stop_number_key | events |
-| X-2 | 26 | 19.31 | 18.708 | uq_measurement | buildings device_space_assignments devices spaces stations |
-| X-3 | 50 | 5.21 | 3.29 | idx_incidents_active idx_stops_geog | alerts incident_types stations |
-| X-4 | 15 | 0.68 | 0.104 | — | mv_place_context |
-| X-5 | 5 | 1.19 | 0.192 | — | mv_facility_response_stats |
-| X-6 | 3 | 1.07 | 0.072 | — | refresh_log |
+| CORE-1 | 5 | 0.86 | 0.12 | idx_places_geog | — |
+| CORE-2 | 15 | 0.47 | 0.061 | — | source_registry |
+| CORE-3 | 0 | 0.42 | 0.024 | — | quarantine_records |
+| CORE-4 | 5 | 0.53 | 0.06 | — | event_audit_log |
+| DB1-1 | 11 | 1.43 | 0.358 | — | route_stops routes stops |
+| DB1-2 | 11 | 1.08 | 0.599 | uq_trip_stop | stops |
+| DB1-3 | 16 | 15.95 | 14.672 | idx_obs_time | vehicles |
+| DB1-4 | 50 | 4.52 | 2.505 | — | routes stops trip_stop_events trips |
+| DB1-5 | 15 | 2.46 | 1.344 | idx_obs_time idx_stops_geog | — |
+| DB2-1 | 6 | 1.31 | 0.515 | buildings_pkey | places |
+| DB2-2 | 14 | 1.87 | 0.491 | — | device_space_assignments devices spaces |
+| DB2-3 | 3 | 0.84 | 0.106 | — | device_space_assignments spaces |
+| DB2-4 | 4 | 2.81 | 1.254 | ex_assignment_no_overlap idx_telemetry_device_time idx_telemetry_time spaces_pkey | devices |
+| DB2-5 | 13 | 2.76 | 0.558 | idx_telemetry_device_time | device_space_assignments devices maintenance_actions metric_types spaces |
+| DB3-1 | 9 | 21.3 | 21.429 | — | attractions stops |
+| DB3-2 | 7 | 1.61 | 0.252 | — | attractions events operating_hours |
+| DB3-3 | 9 | 3.17 | 2.661 | sample_visits_pkey | aggregate_visits attractions source_registry |
+| DB3-4 | 7 | 1.31 | 0.318 | ex_hours_no_overlap idx_attractions_geog stops_stop_number_key | — |
+| DB3-5 | 4 | 13.38 | 11.394 | idx_events_stop_arrival idx_stops_geog trips_pkey vehicles_pkey | attractions events |
+| DB4-1 | 6 | 1.53 | 0.144 | — | alert_rules measurement_types source_registry stations |
+| DB4-2 | 6 | 4.8 | 3.906 | uq_measurement | alert_rules measurement_types stations |
+| DB4-3 | 7 | 12.4 | 11.281 | idx_audit_entity | measurement_types measurements quarantine_records stations |
+| DB4-4 | 24 | 2.22 | 0.984 | hourly_summaries_pkey | alert_rules alerts measurement_types stations |
+| DB4-5 | 6 | 5.02 | 2.614 | idx_env_stations_geog uq_measurement | alert_rules measurement_types |
+| DB5-1 | 5 | 25.66 | 24.285 | idx_drills_facility | facilities incidents source_registry stops |
+| DB5-2 | 6 | 1.84 | 0.205 | idx_incidents_reported | facilities incident_types severity_levels |
+| DB5-3 | 5 | 1.39 | 0.165 | idx_history_incident_time | facilities |
+| DB5-4 | 5 | 38.56 | 42.007 | — | facilities incident_status_history incidents severity_levels |
+| DB5-4B | 5 | 89.57 | 87.443 | — | incidents places |
+| DB5-5 | 2 | 10.26 | 7.522 | idx_history_incident_time idx_incidents_reported idx_obs_time idx_stops_geog | incident_types |
+| X-1 | 2 | 1.27 | 0.142 | idx_attractions_geog stops_stop_number_key | events |
+| X-2 | 26 | 19.42 | 17.3 | uq_measurement | buildings device_space_assignments devices spaces stations |
+| X-3 | 50 | 5.55 | 3.564 | idx_incidents_active idx_stops_geog | alerts incident_types stations |
+| X-4 | 15 | 0.7 | 0.104 | — | mv_place_context |
+| X-5 | 5 | 0.81 | 0.116 | — | mv_facility_response_stats |
+| X-6 | 3 | 0.79 | 0.066 | — | refresh_log |
 
 ## API
 
@@ -216,18 +216,18 @@ Latency over 30 requests per endpoint (after one warm-up), same machine:
 
 | Endpoint | p50 ms | p95 ms | max ms |
 |---|---|---|---|
-| GET /health | 4.4 | 5.6 | 10.1 |
-| GET /api/v1/mobility/stops/nearby | 5.0 | 6.3 | 42.7 |
-| GET /api/v1/mobility/vehicles/positions | 21.5 | 23.1 | 24.6 |
-| GET /api/v1/building/buildings/BLD_G_TOWER/state | 9.8 | 12.8 | 13.2 |
-| GET /api/v1/tourism/attractions | 4.4 | 5.8 | 6.0 |
-| GET /api/v1/environment/exposure | 9.8 | 10.7 | 12.3 |
-| GET /api/v1/safety/incidents/active | 12.8 | 14.6 | 15.1 |
-| GET /api/v1/cross/incident-impact | 13.0 | 15.0 | 16.5 |
-| GET /api/v1/system/map/frame | 21.9 | 23.8 | 25.0 |
-| POST /api/v1/scenarios/DB1-3/run | 19.9 | 21.1 | 22.2 |
-| POST /api/v1/scenarios/X-5/run | 5.7 | 7.2 | 7.6 |
-| POST /api/v1/mobility/observation | 10.8 | 13.4 | 17.4 |
+| GET /health | 3.9 | 4.6 | 10.0 |
+| GET /api/v1/mobility/stops/nearby | 4.9 | 5.8 | 38.0 |
+| GET /api/v1/mobility/vehicles/positions | 20.2 | 21.5 | 22.5 |
+| GET /api/v1/building/buildings/BLD_G_TOWER/state | 9.0 | 10.3 | 11.5 |
+| GET /api/v1/tourism/attractions | 4.0 | 4.9 | 5.3 |
+| GET /api/v1/environment/exposure | 8.7 | 9.8 | 10.5 |
+| GET /api/v1/safety/incidents/active | 12.1 | 13.4 | 14.4 |
+| GET /api/v1/cross/incident-impact | 12.3 | 13.7 | 14.1 |
+| GET /api/v1/system/map/frame | 20.7 | 22.8 | 24.5 |
+| POST /api/v1/scenarios/DB1-3/run | 19.6 | 21.6 | 26.2 |
+| POST /api/v1/scenarios/X-5/run | 5.2 | 5.8 | 6.1 |
+| POST /api/v1/mobility/observation | 10.2 | 13.7 | 15.7 |
 
 ## Web console
 

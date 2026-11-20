@@ -559,7 +559,8 @@ _SCENARIOS: list[Scenario] = [
                CASE WHEN l.quality_flag <> 'GOOD' THEN 'NOT_GRADED'
                     WHEN l.measured_value > vb.threshold_value THEN 'VERY_BAD'
                     WHEN l.measured_value > b.threshold_value  THEN 'BAD'
-                    ELSE 'NORMAL' END AS grade
+                    ELSE 'NORMAL' END AS grade,
+               b.threshold_value::float8 AS bad_threshold, vb.threshold_value::float8 AS very_bad_threshold
         FROM (
             SELECT DISTINCT ON (m.type_code) m.type_code, m.measured_value, m.quality_flag, m.observed_at, m.source_id
             FROM environment.measurements m

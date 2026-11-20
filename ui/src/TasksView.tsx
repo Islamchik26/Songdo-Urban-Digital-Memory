@@ -5,6 +5,7 @@ import L from "leaflet";
 import LeafletMap, { popup } from "./LeafletMap";
 import { getRegistry, runScenario } from "./api";
 import { Charts, StoryPanel } from "./charts";
+import { cellText, columnLabel } from "./columns";
 import type { Param, Registry, Row, RunResult, Scenario } from "./api";
 
 function cell(value: unknown): string {
@@ -57,12 +58,24 @@ function ResultMap({ rows, keys }: { rows: Row[]; keys: [string, string] }) {
     const group = L.featureGroup().addTo(map);
     const [lonKey, latKey] = keys;
     const labelKey = Object.keys(rows[0]).find((k) => /name|title/.test(k)) ?? Object.keys(rows[0])[0];
+    // a GeoJSON column (e.g. a hazard zone) is drawn as a shape under the points
+    const shapeKeys = Object.keys(rows[0]).filter((k) => k.endsWith("_geojson"));
+    for (const row of rows) {
+      for (const k of shapeKeys) {
+        try {
+          const shape = typeof row[k] === "string" ? JSON.parse(String(row[k])) : row[k];
+          if (shape) L.geoJSON(shape, { style: { color: "#d03b3b", weight: 2, fillColor: "#d03b3b", fillOpacity: 0.12 } })
+            .bindPopup(popup(cell(row[labelKey]), [[columnLabel(k), "closed-off area"]])).addTo(group);
+        } catch { /* not valid GeoJSON: skip the shape, keep the point */ }
+      }
+    }
     for (const row of rows) {
       const lon = Number(row[lonKey]);
       const lat = Number(row[latKey]);
       if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue;
       L.circleMarker([lat, lon], { radius: 7, color: "#ffffff", weight: 2, fillColor: "#ea580c", fillOpacity: 0.9 })
-        .bindPopup(popup(cell(row[labelKey]), Object.entries(row).slice(0, 10).map(([k, v]) => [k, cell(v)])))
+        .bindPopup(popup(cell(row[labelKey]), Object.entries(row).filter(([k]) => !k.endsWith("_geojson")).slice(0, 10)
+          .map(([k, v]) => [columnLabel(k), cellText(v)])))
         .addTo(group);
     }
     groupRef.current = group;
@@ -250,12 +263,12 @@ export default function TasksView() {
                   <div className="table-wrap">
                     <table>
                       <thead>
-                        <tr>{columns.map((c) => <th key={c}>{c}</th>)}</tr>
+                        <tr>{columns.map((c) => <th key={c} title={`SQL column: ${c}`}>{columnLabel(c)}</th>)}</tr>
                       </thead>
                       <tbody>
                         {result.rows.map((row, i) => (
                           <tr key={i}>
-                            {columns.map((c) => <td key={c} title={cell(row[c])}>{cell(row[c])}</td>)}
+                            {columns.map((c) => <td key={c} title={cell(row[c])}>{cellText(row[c])}</td>)}
                           </tr>
                         ))}
                       </tbody>

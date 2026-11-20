@@ -103,7 +103,7 @@ The console has five pages:
 
 | Page | What it does |
 |---|---|
-| **Tasks** | All 36 tasks. Pick one, change its parameters, run it: a plain-language headline with key numbers, a chart made for that task (`api/visuals.py`), a map for results with coordinates, the rows, the SQL that ran and the query plan. |
+| **Tasks** | All 36 tasks. Pick one, change its parameters, run it: a plain-language headline with key numbers, a chart made for that task (`api/visuals.py`), a map for results with coordinates (hazard zones drawn as shapes), the rows with readable column names and Korean times, the SQL that ran and the query plan. |
 | **City map** | Stops, routes, stations, attractions, buildings, safety facilities. A time slider rebuilds the city at any moment from history: vehicles, incidents in their status at that time, PM2.5 per station, air alerts. **Live** mode refreshes every 2 s. |
 | **Ingest** | Forms for a new place, GPS, building sensor, device relocation, a new attraction, air reading, incident report and status change, with good and bad presets. Shows the outcome (loaded, quarantined, duplicate, rejected) and the batch, quarantine and audit rows written. |
 | **Edit** | Pick a place, attraction, event or device, load its current values, change any fields and save, or delete / cancel / retire it. Changed fields show their old value; the record's audit history is listed below. |

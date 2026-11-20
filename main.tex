@@ -253,12 +253,12 @@ the evidence run.
 Gate & Result & Evidence \\
 \midrule
 Database and PostGIS start successfully & \pass & PostgreSQL 18.3, PostGIS 3.7.0 (local); PostgreSQL 18.7, PostGIS 3.6.4 (hosted) \\
-All migration files run in dependency order & \pass & 9 files with \cmd{psql -v ON_ERROR_STOP=1}, all exit 0, 12.8 s \\
+All migration files run in dependency order & \pass & 9 files with \cmd{psql -v ON_ERROR_STOP=1}, all exit 0, 11.3 s \\
 Seed data load produces no FK/CHECK failures & \pass & 111,543 rows in 39 tables \\
 At least one invalid record is quarantined & \pass & Out-of-bounds, swapped coordinates, unknown vehicle, fault readings, invalid severity \\
 At least one spatial query uses a GiST index & \pass & 8 tasks use a GiST index in \cmd{EXPLAIN ANALYZE} \\
 FastAPI docs open and endpoints validate input & \pass & 37 of 37 contract cases (2xx, 401, 404, 409, 422) \\
-Automated tests pass without manual editing & \pass & 74 tests, OK, 8.4 s \\
+Automated tests pass without manual editing & \pass & 74 tests, OK, 9.3 s \\
 Backup and restore into a fresh database & \pass & \cmd{pg_dump -Fc} \ra{} \code{pg_restore}: 63 of 63 comparisons identical \\
 \bottomrule
 \end{tabularx}
@@ -1295,7 +1295,7 @@ or \code{#/map?t=18:20}.
 \subsection{Explaining results to people}\label{sec:viz}
 
 A table answers the question only for someone who already knows what each column means. Every
-task with a chart therefore opens in three layers, from simplest to most detailed:
+one of the 36 tasks therefore opens in three layers, from simplest to most detailed:
 
 \begin{enumerate}
   \item \textbf{A headline}: one sentence computed from the returned rows, such as
@@ -1304,17 +1304,73 @@ task with a chart therefore opens in three layers, from simplest to most detaile
   \item \textbf{A chart made for that task's question}, for example a 24-hour line with the
     \emph{bad} and \emph{very bad} limits (DB4-4), a timeline of a device's stays (DB2-3), or
     visitors against bus seats (DB3-5).
-  \item \textbf{The table}, unchanged, for every detail.
+  \item \textbf{The table}, for every detail, with readable column names (``Distance (m)''
+    instead of \texttt{dist\_m}), times in Korean time and Yes/No instead of true/false. The SQL
+    column name stays visible on hover.
 \end{enumerate}
 
 The charts are declared, not programmed per task: \code{api/visuals.py} describes each task's
 chart in a few lines of JSON (type, columns, units, limits, status colours) and its headline as a
-small Python function. The console draws eight reusable chart types from that description: line,
-columns, horizontal bars, paired bars, timeline, stepper, tree and meters. A test checks that
+small Python function. The console draws ten reusable chart types from that description: line,
+columns, horizontal bars, counts per category, paired or grouped bars, timeline (by time, date or
+clock), stepper, tree, meters and cards. Results with a GeoJSON column, such as the hazard zones of
+DB5-5, are also drawn as shapes on the map. A test checks that
 every column a chart names exists in the task's real result, and a failing headline never breaks
 the task itself. Status colours (good, warning, serious, critical) always come with an icon and a
 label, and the series colours were checked for colour-blind separation in light and dark mode.
-Step one covers ten tasks: DB1-2, DB1-4, DB2-2, DB2-3, DB2-4, DB3-5, DB4-4, DB4-5, DB5-3 and DB5-4.
+Table~\ref{tab:charts} lists the chart chosen for each task.
+
+\begingroup\small
+\begin{xltabular}{\linewidth}{@{}p{1.5cm}p{3.4cm}X@{}}
+\caption{The chart behind each task.}\label{tab:charts}\\
+\toprule
+Task & Chart & What it shows \\
+\midrule
+\endfirsthead
+\toprule
+Task & Chart & What it shows \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+CORE-1 & bars + map & distance of each place, with the search radius \\
+CORE-2 & counts & sources by provenance and by verification level \\
+CORE-3 & counts & quarantined records by reason and by target table \\
+CORE-4 & counts & audit entries by table and by kind of change \\
+DB1-1 & stepper + map & stops in order with the distance between them \\
+DB1-2 & line + columns & lateness at each stop; passengers on board \\
+DB1-3 & bars + map & speed and age of the last fix of every vehicle at $T$ \\
+DB1-4 & bars & actual vs scheduled headway, coloured on schedule / bunched / gap \\
+DB1-5 & bars + map & distance to the stops near the latest fixes, with the radius \\
+DB2-1 & counts + bars & check result; building-to-place distance against the limit \\
+DB2-2 & tree & floors, rooms and installed devices \\
+DB2-3 & timeline & each stay of the device, current one marked \\
+DB2-4 & bars & minutes since the last reading, with the alarm threshold \\
+DB2-5 & cards & latest reading, status and maintenance of every device \\
+DB3-1 & cards + map & accessibility, fee and nearest stop of every attraction \\
+DB3-2 & timeline (dates) & event dates, coloured by the opening-hours check \\
+DB3-3 & paired bars & published monthly visitors vs sensor counts \\
+DB3-4 & timeline (clock) + map & opening hours of that weekday with the time asked \\
+DB3-5 & paired bars & expected visitors vs bus seats, with a status per event \\
+DB4-1 & cards + map & limits and unit of each pollutant \\
+DB4-2 & meters & latest reading of each pollutant against its limits \\
+DB4-3 & grouped bars & late, faulty and corrected readings per station and pollutant \\
+DB4-4 & line & hourly average with limit lines, min--max band and alert hours \\
+DB4-5 & meters & air at a point: each pollutant against its limits \\
+DB5-1 & paired bars + map & incidents handled and drills held per facility \\
+DB5-2 & cards + map & new incidents, most urgent first, with the response target \\
+DB5-3 & stepper & the incident's status changes and the time in each state \\
+DB5-4 & bars & average response (with 90th percentile) and share within the target \\
+DB5-4B & bars + map & incidents per hotspot \\
+DB5-5 & cards + map & areas to avoid, drawn as zones on the map \\
+X-1 & bars & events near the stop and their expected visitors \\
+X-2 & bars + counts & outdoor air at the nearest station; devices by type \\
+X-3 & counts & bus stops near each open incident \\
+X-4 & cards + map & context card per place \\
+X-5 & bars & response statistics read from the materialized view \\
+X-6 & cards & freshness of each materialized view \\
+\end{xltabular}
+\endgroup
 
 \evidencefigure{task_DB4-4.png}{DB4-4: the headline, then the hourly PM2.5 average against the \emph{bad} and \emph{very bad} limits, with the hours inside an alert marked.}{fig:viz-db44}
 
@@ -1335,7 +1391,7 @@ Step one covers ten tasks: DB1-2, DB1-4, DB2-2, DB2-3, DB2-4, DB3-5, DB4-4, DB4-
 
 \subsection{Automated test suite}
 
-\cmd{python -m unittest tests/test_platform.py} runs 74 tests in about 8 seconds. Every
+\cmd{python -m unittest tests/test_platform.py} runs 74 tests in about 9 seconds. Every
 database test runs inside a transaction that is rolled back, so the suite leaves no trace
 and can run against any copy of the database.
 
@@ -1476,9 +1532,9 @@ with the indexes (median of 5 runs) and with index scans disabled (median of 3 r
 \toprule
 Query (1,000,000 rows) & With index (ms) & Without (ms) & Speed-up \\
 \midrule
-Radius search: fixes within 150 m of a point (GiST on \code{geography}) & 141.80 & 893.2 & 6.3$\times$ \\
-Point-in-time replay: last fix of 50 vehicles at $T$ (B-tree \cmd{(vehicle_id, observed_at)}) & 1.39 & 4,739.7 & 3,410$\times$ \\
-Time window: fixes in a 5-minute interval (B-tree \code{observed_at}) & 1.84 & 138.4 & 75$\times$ \\
+Radius search: fixes within 150 m of a point (GiST on \code{geography}) & 44.70 & 879.2 & 20$\times$ \\
+Point-in-time replay: last fix of 50 vehicles at $T$ (B-tree \cmd{(vehicle_id, observed_at)}) & 0.81 & 4,630.6 & 5,717$\times$ \\
+Time window: fixes in a 5-minute interval (B-tree \code{observed_at}) & 1.31 & 65.6 & 50$\times$ \\
 \bottomrule
 \end{tabularx}
 \end{center}
@@ -1490,11 +1546,11 @@ Time window: fixes in a 5-minute interval (B-tree \code{observed_at}) & 1.84 & 1
 \toprule
 Query & Planner (ms) & No index (ms) & Speed-up \\
 \midrule
-Stops within 1,000 m (513 stops, \code{idx_stops_geog}) & 1.06 & 2.44 & 2.3$\times$ \\
-GPS points within 150 m (20,238 rows, \code{idx_obs_geog}) & 7.67 & 53.78 & 7.0$\times$ \\
-Last position of each vehicle at $T$ & 1.25 & 51.62 & 41$\times$ \\
-Status history of one incident (49,421 rows) & 0.32 & 5.78 & 18$\times$ \\
-Audit history of one entity (small table: little to gain) & 0.28 & 0.39 & 1.4$\times$ \\
+Stops within 1,000 m (513 stops, \code{idx_stops_geog}) & 0.98 & 2.12 & 2.2$\times$ \\
+GPS points within 150 m (20,238 rows, \code{idx_obs_geog}) & 7.55 & 60.67 & 8.0$\times$ \\
+Last position of each vehicle at $T$ & 0.81 & 60.88 & 75$\times$ \\
+Status history of one incident (49,421 rows) & 0.36 & 6.39 & 18$\times$ \\
+Audit history of one entity (small table: little to gain) & 0.34 & 0.52 & 1.6$\times$ \\
 \bottomrule
 \end{tabularx}
 \end{center}
@@ -1519,11 +1575,11 @@ the plan prepared while indexes were enabled. The benchmark now connects with
 
 \subsection{Query latency}
 
-All 36 tasks have a median below 100 ms on the fixture data. The slowest is DB5-4B
-(DBSCAN over 10,000 incidents, 96 ms). In total, 32 tasks run in under 20 ms and 27 in
+All 36 tasks have a median below 90 ms on the fixture data. The slowest is DB5-4B
+(DBSCAN over 10,000 incidents, 90 ms). In total, 32 tasks run in under 20 ms and 27 in
 under 10 ms. Through the HTTP API, the 50th percentile of the measured endpoints is
-between 4 and 22 ms. The spatial lookups targeted by the handbook (CORE-1, DB1-5,
-nearby stops) take 1.1--5.0 ms, below the 20 ms target. These timings come from one laptop:
+between 4 and 21 ms. The spatial lookups targeted by the handbook (CORE-1, DB1-5,
+nearby stops) take 0.9--4.9 ms, below the 20 ms target. These timings come from one laptop:
 they show plan shape and relative cost, not production capacity.
 
 % =============================================================================
@@ -1535,7 +1591,7 @@ createdb -h localhost -p 5433 -U songdo_admin songdo_restore_test
 pg_restore -h localhost -p 5433 -U songdo_admin -d songdo_restore_test --exit-on-error outputs/songdo.backup
 \end{lstlisting}
 
-In the evidence run the dump took 0.9 s (2.6 MB) and the restore 4.2 s. All 63 comparisons
+In the evidence run the dump took 1.0 s (2.5 MB) and the restore 4.0 s. All 63 comparisons
 between the original and the restored database are identical:
 
 \begin{itemize}
@@ -1554,8 +1610,8 @@ are therefore schema-qualified (\code{public.ST_Covers}).
 \subsection{Clean clone in under 90 seconds}
 
 The final exit gate asks that a clean clone builds the database and passes the tests in
-under 90 seconds. The evidence run measured 12.8 s for all migrations and the seed, plus
-8.4 s for the 74 tests: about 21 s in total.
+under 90 seconds. The evidence run measured 11.3 s for all migrations and the seed, plus
+9.3 s for the 74 tests: about 21 s in total.
 
 \subsection{Determinism}
 

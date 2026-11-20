@@ -1,7 +1,7 @@
 command: python -m unittest -v tests/test_platform.py
 database: songdo_evidence (clean build)
 exit code: 0
-wall time: 9.6 s
+wall time: 10.8 s
 test_midnight_is_written_as_24_00 (tests.test_platform.AirKoreaParsingTests.test_midnight_is_written_as_24_00) ... ok
 test_one_api_row_becomes_six_readings (tests.test_platform.AirKoreaParsingTests.test_one_api_row_becomes_six_readings) ... ok
 test_a_broken_headline_never_breaks_the_task (tests.test_platform.ApiValidationTests.test_a_broken_headline_never_breaks_the_task) ... ok
@@ -79,6 +79,6 @@ test_schedule_constraints (tests.test_platform.TourismDatabaseTests.test_schedul
 test_tourism_adapters (tests.test_platform.TourismDatabaseTests.test_tourism_adapters) ... ok
 
 ----------------------------------------------------------------------
-Ran 74 tests in 8.352s
+Ran 74 tests in 9.314s
 
 OK

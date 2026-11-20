@@ -41,7 +41,8 @@ export interface RunResult {
 
 export interface Story { headline: string; stats: { label: string; value: string }[] }
 
-export interface Measure { column: string; label: string; unit?: string; unit_column?: string; divide?: number; max?: number }
+export interface Measure { column: string; label?: string; label_column?: string; label_map?: Record<string, string>;
+  format?: "minutes"; unit?: string; unit_column?: string; divide?: number; max?: number }
 interface StatusSpec { column: string; map: Record<string, string>; labels?: Record<string, string> }
 /** One chart, as declared in api/visuals.py. Which keys apply depends on `type`. */
 export interface ChartSpec {
@@ -73,6 +74,21 @@ export interface ChartSpec {
   duration?: { column: string; unit: string } | string;
   time?: string;
   state?: string;               // stepper: the column holding each step's state
+  gap?: { column: string; unit: string };   // stepper: a distance shown between steps
+  scroll?: boolean;
+  note?: string;
+  time_columns?: string[];      // bars: label columns shown as a clock time
+  distinct?: string[] | string; // bars: one bar per distinct key; counts: count distinct values of this column
+  group?: string;               // counts
+  labels?: Record<string, string>;
+  series?: { column: string; label: string }[];   // paired_bars with 2-3 measures
+  note_column?: string; note_label?: string; note_unit?: string;
+  mode?: "date" | "clock";      // timeline
+  marker_param?: string; marker_label?: string;
+  card_title?: string; pretty_title?: boolean; subtitle?: string[];   // cards
+  notes?: { column: string; label: string; unit?: string; format?: "bool" | "date" | "time" | "datetime";
+            labels?: Record<string, string> }[];
+  level?: { column: string; good_below: number; warning_below: number; labels: Record<string, string> };
   detail?: string;
   actor?: string;
   path?: string;
