@@ -1,0 +1,69 @@
+flowchart LR
+    subgraph sg_building["building"]
+        building_buildings["buildings"]
+        building_device_space_assignments["device_space_assignments"]
+        building_devices["devices"]
+        building_spaces["spaces"]
+    end
+    subgraph sg_core["core"]
+        core_places["places"]
+    end
+    subgraph sg_environment["environment"]
+        environment_alerts["alerts"]
+        environment_measurements["measurements"]
+        environment_stations["stations"]
+    end
+    subgraph sg_mobility["mobility"]
+        mobility_stops["stops"]
+        mobility_trip_stop_events["trip_stop_events"]
+        mobility_trips["trips"]
+        mobility_vehicles["vehicles"]
+    end
+    subgraph sg_safety["safety"]
+        safety_facilities["facilities"]
+        safety_incident_status_history["incident_status_history"]
+        safety_incident_types["incident_types"]
+        safety_incidents["incidents"]
+        safety_severity_levels["severity_levels"]
+    end
+    subgraph sg_tourism["tourism"]
+        tourism_attractions["attractions"]
+        tourism_events["events"]
+    end
+    subgraph sg_views["cross_domain"]
+        cross_domain_refresh_log["refresh_log"]
+        v_mv_facility_response_stats[["mv_facility_response_stats"]]
+        v_mv_place_context[["mv_place_context"]]
+        v_mv_stop_hourly_service[["mv_stop_hourly_service"]]
+        v_v_attractions_events_near_stops(["v_attractions_events_near_stops"])
+        v_v_building_devices_with_environmental_context(["v_building_devices_with_environmental_context"])
+        v_v_incidents_mobility_environmental_impact(["v_incidents_mobility_environmental_impact"])
+        v_v_materialized_view_freshness(["v_materialized_view_freshness"])
+    end
+    safety_facilities --> v_mv_facility_response_stats
+    safety_incident_status_history --> v_mv_facility_response_stats
+    safety_incidents --> v_mv_facility_response_stats
+    safety_severity_levels --> v_mv_facility_response_stats
+    core_places --> v_mv_place_context
+    environment_stations --> v_mv_place_context
+    mobility_stops --> v_mv_place_context
+    safety_facilities --> v_mv_place_context
+    tourism_attractions --> v_mv_place_context
+    mobility_trip_stop_events --> v_mv_stop_hourly_service
+    mobility_trips --> v_mv_stop_hourly_service
+    mobility_vehicles --> v_mv_stop_hourly_service
+    mobility_stops --> v_v_attractions_events_near_stops
+    tourism_attractions --> v_v_attractions_events_near_stops
+    tourism_events --> v_v_attractions_events_near_stops
+    building_buildings --> v_v_building_devices_with_environmental_context
+    building_device_space_assignments --> v_v_building_devices_with_environmental_context
+    building_devices --> v_v_building_devices_with_environmental_context
+    building_spaces --> v_v_building_devices_with_environmental_context
+    environment_measurements --> v_v_building_devices_with_environmental_context
+    environment_stations --> v_v_building_devices_with_environmental_context
+    environment_alerts --> v_v_incidents_mobility_environmental_impact
+    environment_stations --> v_v_incidents_mobility_environmental_impact
+    mobility_stops --> v_v_incidents_mobility_environmental_impact
+    safety_incident_types --> v_v_incidents_mobility_environmental_impact
+    safety_incidents --> v_v_incidents_mobility_environmental_impact
+    cross_domain_refresh_log --> v_v_materialized_view_freshness

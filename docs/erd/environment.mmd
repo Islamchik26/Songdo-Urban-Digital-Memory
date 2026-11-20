@@ -1,0 +1,75 @@
+erDiagram
+    environment__alert_rules["environment.alert_rules"] {
+        int rule_id PK
+        varchar(8) type_code FK
+        varchar(12) severity
+        numeric threshold_value
+        bool is_active
+    }
+    environment__alerts["environment.alerts"] {
+        bigint alert_id PK
+        int rule_id FK
+        varchar(48) station_id FK
+        varchar(8) type_code FK
+        timestamptz started_hour
+        timestamptz last_exceeded_hour
+        numeric peak_value
+        text alert_message
+        varchar(10) status
+        timestamptz triggered_at
+        timestamptz resolved_at "nullable"
+    }
+    environment__hourly_summaries["environment.hourly_summaries"] {
+        varchar(48) station_id PK, FK
+        varchar(8) type_code PK, FK
+        timestamptz hour_start PK
+        numeric avg_value
+        numeric min_value
+        numeric max_value
+        int sample_count
+        timestamptz refreshed_at
+    }
+    environment__measurement_types["environment.measurement_types"] {
+        varchar(8) type_code PK
+        varchar(32) name_ko
+        varchar(64) name_en
+        varchar(16) unit
+        numeric min_valid
+        numeric max_valid
+        varchar(16) api_field UK
+    }
+    environment__measurements["environment.measurements"] {
+        bigint measurement_id PK
+        varchar(48) station_id FK
+        varchar(8) type_code FK
+        numeric measured_value
+        varchar(8) quality_flag
+        timestamptz observed_at
+        timestamptz received_at
+        timestamptz recorded_at
+        varchar(32) source_id FK
+    }
+    environment__stations["environment.stations"] {
+        varchar(48) station_id PK
+        varchar(64) station_name_ko UK
+        varchar(255) address "nullable"
+        varchar(32) network
+        varchar(128) measured_items "nullable"
+        smallint established_year "nullable"
+        geometry geom
+        varchar(32) source_id FK
+        timestamptz created_at
+    }
+    core__source_registry["core.source_registry"] {
+        varchar(32) source_id PK
+    }
+    environment__measurement_types ||--o{ environment__alert_rules : "type_code"
+    environment__alert_rules ||--o{ environment__alerts : "rule_id"
+    environment__stations ||--o{ environment__alerts : "station_id"
+    environment__measurement_types ||--o{ environment__alerts : "type_code"
+    environment__stations ||--o{ environment__hourly_summaries : "station_id"
+    environment__measurement_types ||--o{ environment__hourly_summaries : "type_code"
+    core__source_registry ||--o{ environment__measurements : "source_id"
+    environment__stations ||--o{ environment__measurements : "station_id"
+    environment__measurement_types ||--o{ environment__measurements : "type_code"
+    core__source_registry ||--o{ environment__stations : "source_id"

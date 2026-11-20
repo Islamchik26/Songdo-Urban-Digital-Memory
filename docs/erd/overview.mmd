@@ -1,0 +1,68 @@
+flowchart LR
+    subgraph sg_core["Core contracts (core)"]
+        direction TB
+        core__event_audit_log["event_audit_log"]
+        core__ingestion_batches["ingestion_batches"]
+        core__places["places"]
+        core__quarantine_records["quarantine_records"]
+        core__source_registry["source_registry"]
+        core__staging_records["staging_records"]
+        core__study_areas["study_areas"]
+    end
+    subgraph sg_mobility["DB1 Mobility (mobility)"]
+        direction TB
+        mobility__route_stops["route_stops"]
+        mobility__routes["routes"]
+        mobility__stops["stops"]
+        mobility__trip_stop_events["trip_stop_events"]
+        mobility__trips["trips"]
+        mobility__vehicle_observations["vehicle_observations"]
+        mobility__vehicles["vehicles"]
+    end
+    subgraph sg_building["DB2 Smart Building (building)"]
+        direction TB
+        building__buildings["buildings"]
+        building__device_space_assignments["device_space_assignments"]
+        building__devices["devices"]
+        building__maintenance_actions["maintenance_actions"]
+        building__metric_types["metric_types"]
+        building__spaces["spaces"]
+        building__telemetry["telemetry"]
+    end
+    subgraph sg_tourism["DB3 Tourism (tourism)"]
+        direction TB
+        tourism__aggregate_visits["aggregate_visits"]
+        tourism__attractions["attractions"]
+        tourism__events["events"]
+        tourism__operating_hours["operating_hours"]
+        tourism__sample_visits["sample_visits"]
+    end
+    subgraph sg_environment["DB4 Environment (environment)"]
+        direction TB
+        environment__alert_rules["alert_rules"]
+        environment__alerts["alerts"]
+        environment__hourly_summaries["hourly_summaries"]
+        environment__measurement_types["measurement_types"]
+        environment__measurements["measurements"]
+        environment__stations["stations"]
+    end
+    subgraph sg_safety["DB5 Safety and Incident (safety)"]
+        direction TB
+        safety__facilities["facilities"]
+        safety__incident_status_history["incident_status_history"]
+        safety__incident_types["incident_types"]
+        safety__incidents["incidents"]
+        safety__response_drills["response_drills"]
+        safety__severity_levels["severity_levels"]
+    end
+    subgraph sg_cross_domain["Cross-domain (cross_domain)"]
+        direction TB
+        cross_domain__refresh_log["refresh_log"]
+    end
+    sg_tourism -. "source_id" .-> core__source_registry
+    tourism__attractions -- "place_id" --> core__places
+    building__buildings -- "place_id" --> core__places
+    sg_building -. "source_id" .-> core__source_registry
+    sg_safety -. "source_id" .-> core__source_registry
+    sg_environment -. "source_id" .-> core__source_registry
+    sg_mobility -. "source_id" .-> core__source_registry

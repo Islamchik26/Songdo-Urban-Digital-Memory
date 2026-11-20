@@ -1,0 +1,88 @@
+erDiagram
+    mobility__route_stops["mobility.route_stops"] {
+        varchar(32) route_id PK, FK
+        smallint direction PK
+        int sequence_order PK
+        varchar(32) stop_id FK
+    }
+    mobility__routes["mobility.routes"] {
+        varchar(32) route_id PK
+        varchar(16) route_number UK
+        varchar(255) route_name_ko
+        varchar(255) route_name_en "nullable"
+        varchar(24) route_type
+        varchar(32) source_id FK
+        timestamptz created_at
+    }
+    mobility__stops["mobility.stops"] {
+        varchar(32) stop_id PK
+        varchar(16) stop_number UK
+        varchar(255) stop_name_ko
+        varchar(255) stop_name_en "nullable"
+        geometry geom
+        varchar(32) managing_bis
+        date collected_on "nullable"
+        varchar(32) source_id FK
+        timestamptz created_at
+    }
+    mobility__trip_stop_events["mobility.trip_stop_events"] {
+        varchar(48) trip_id PK, FK
+        int sequence_order PK
+        varchar(32) stop_id FK
+        timestamptz scheduled_arrival
+        timestamptz observed_arrival "nullable"
+        timestamptz observed_departure "nullable"
+        int boardings
+        int alightings
+        int lateness_seconds "generated, nullable"
+        int dwell_seconds "generated, nullable"
+    }
+    mobility__trips["mobility.trips"] {
+        varchar(48) trip_id PK
+        varchar(32) route_id FK
+        smallint direction
+        varchar(32) vehicle_id FK
+        date service_date
+        timestamptz scheduled_departure
+        timestamptz scheduled_arrival
+        varchar(16) status
+        varchar(32) source_id FK
+    }
+    mobility__vehicle_observations["mobility.vehicle_observations"] {
+        bigint observation_id PK
+        varchar(32) vehicle_id FK
+        varchar(48) trip_id FK "nullable"
+        geometry geom
+        numeric speed_kmh
+        numeric heading_deg "nullable"
+        numeric battery_state_of_charge_pct "nullable"
+        timestamptz observed_at
+        timestamptz received_at
+        timestamptz recorded_at
+        varchar(32) source_id FK
+    }
+    mobility__vehicles["mobility.vehicles"] {
+        varchar(32) vehicle_id PK
+        varchar(16) plate_number UK
+        varchar(24) vehicle_type
+        int capacity
+        bool is_active
+        varchar(32) source_id FK
+        timestamptz created_at
+    }
+    core__source_registry["core.source_registry"] {
+        varchar(32) source_id PK
+    }
+    mobility__routes ||--o{ mobility__route_stops : "route_id"
+    mobility__stops ||--o{ mobility__route_stops : "stop_id"
+    core__source_registry ||--o{ mobility__routes : "source_id"
+    core__source_registry ||--o{ mobility__stops : "source_id"
+    mobility__stops ||--o{ mobility__trip_stop_events : "stop_id"
+    mobility__trips ||--o{ mobility__trip_stop_events : "trip_id"
+    mobility__routes ||--o{ mobility__trips : "route_id"
+    core__source_registry ||--o{ mobility__trips : "source_id"
+    mobility__vehicles ||--o{ mobility__trips : "vehicle_id"
+    core__source_registry ||--o{ mobility__vehicle_observations : "source_id"
+    mobility__trips |o--o{ mobility__vehicle_observations : "trip_id"
+    mobility__vehicles ||--o{ mobility__vehicle_observations : "vehicle_id"
+    core__source_registry ||--o{ mobility__vehicles : "source_id"

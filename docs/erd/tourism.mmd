@@ -1,0 +1,68 @@
+erDiagram
+    tourism__aggregate_visits["tourism.aggregate_visits"] {
+        varchar(32) attraction_id PK, FK
+        date year_month PK
+        int visitor_count
+        varchar(32) source_id FK
+        timestamptz recorded_at
+    }
+    tourism__attractions["tourism.attractions"] {
+        varchar(32) attraction_id PK
+        varchar(255) attraction_name_ko
+        varchar(255) attraction_name_en "nullable"
+        varchar(24) category
+        varchar(255) road_address "nullable"
+        bool is_wheelchair_accessible
+        bool has_parking
+        int parking_spaces "nullable"
+        int admission_fee_krw
+        varchar(64) place_id FK "nullable"
+        geometry geom
+        varchar(32) source_id FK
+        timestamptz created_at
+    }
+    tourism__events["tourism.events"] {
+        varchar(48) event_id PK
+        varchar(32) attraction_id FK
+        varchar(255) event_name_ko
+        varchar(255) event_name_en "nullable"
+        varchar(16) event_type
+        date start_date
+        date end_date
+        time daily_start_time
+        time daily_end_time
+        int expected_attendance
+        bool is_cancelled
+        varchar(32) source_id FK
+        timestamptz created_at
+    }
+    tourism__operating_hours["tourism.operating_hours"] {
+        bigint hours_id PK
+        varchar(32) attraction_id FK
+        smallint day_of_week
+        time opens_at
+        time closes_at
+    }
+    tourism__sample_visits["tourism.sample_visits"] {
+        varchar(32) attraction_id PK, FK
+        timestamptz hour_start PK
+        int visitor_count
+        varchar(32) source_id FK
+        timestamptz received_at
+        timestamptz recorded_at
+    }
+    core__places["core.places"] {
+        varchar(64) place_id PK
+    }
+    core__source_registry["core.source_registry"] {
+        varchar(32) source_id PK
+    }
+    tourism__attractions ||--o{ tourism__aggregate_visits : "attraction_id"
+    core__source_registry ||--o{ tourism__aggregate_visits : "source_id"
+    core__places |o--o{ tourism__attractions : "place_id"
+    core__source_registry ||--o{ tourism__attractions : "source_id"
+    tourism__attractions ||--o{ tourism__events : "attraction_id"
+    core__source_registry ||--o{ tourism__events : "source_id"
+    tourism__attractions ||--o{ tourism__operating_hours : "attraction_id"
+    tourism__attractions ||--o{ tourism__sample_visits : "attraction_id"
+    core__source_registry ||--o{ tourism__sample_visits : "source_id"

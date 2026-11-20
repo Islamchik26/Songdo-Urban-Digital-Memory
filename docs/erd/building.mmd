@@ -1,0 +1,84 @@
+erDiagram
+    building__buildings["building.buildings"] {
+        varchar(32) building_id PK
+        varchar(255) building_name_ko
+        varchar(255) building_name_en "nullable"
+        varchar(24) building_use
+        varchar(255) road_address "nullable"
+        smallint floors_above
+        smallint floors_below
+        varchar(64) place_id FK "nullable"
+        geometry geom
+        varchar(32) source_id FK
+        timestamptz created_at
+    }
+    building__device_space_assignments["building.device_space_assignments"] {
+        bigint assignment_id PK
+        varchar(48) device_id FK
+        varchar(48) space_id FK
+        timestamptz assigned_at
+        timestamptz unassigned_at "nullable"
+    }
+    building__devices["building.devices"] {
+        varchar(48) device_id PK
+        varchar(24) device_type
+        varchar(64) manufacturer
+        varchar(64) model
+        varchar(64) serial_number UK
+        varchar(16) protocol
+        date installed_on
+        varchar(16) current_status
+        varchar(32) source_id FK
+        timestamptz created_at
+    }
+    building__maintenance_actions["building.maintenance_actions"] {
+        bigint action_id PK
+        varchar(48) device_id FK
+        varchar(24) action_type
+        text description
+        varchar(64) technician
+        timestamptz started_at
+        timestamptz completed_at "nullable"
+    }
+    building__metric_types["building.metric_types"] {
+        varchar(24) metric_code PK
+        varchar(128) description
+        varchar(16) unit
+        numeric min_valid
+        numeric max_valid
+    }
+    building__spaces["building.spaces"] {
+        varchar(48) space_id PK
+        varchar(32) building_id FK
+        varchar(48) parent_space_id FK "nullable"
+        varchar(16) space_type
+        varchar(128) space_name
+        smallint floor_number
+        numeric area_m2 "nullable"
+    }
+    building__telemetry["building.telemetry"] {
+        bigint telemetry_id PK
+        varchar(48) device_id FK
+        varchar(24) metric FK
+        numeric value
+        varchar(8) quality_flag
+        timestamptz observed_at
+        timestamptz received_at
+        timestamptz recorded_at
+    }
+    core__places["core.places"] {
+        varchar(64) place_id PK
+    }
+    core__source_registry["core.source_registry"] {
+        varchar(32) source_id PK
+    }
+    core__places |o--o{ building__buildings : "place_id"
+    core__source_registry ||--o{ building__buildings : "source_id"
+    building__devices ||--o{ building__device_space_assignments : "device_id"
+    building__spaces ||--o{ building__device_space_assignments : "space_id"
+    core__source_registry ||--o{ building__devices : "source_id"
+    building__spaces |o--o{ building__spaces : "building_id, parent_space_id"
+    building__devices ||--o{ building__maintenance_actions : "device_id"
+    building__buildings ||--o{ building__spaces : "building_id"
+    building__devices ||--o{ building__telemetry : "device_id"
+    building__metric_types ||--o{ building__telemetry : "metric"

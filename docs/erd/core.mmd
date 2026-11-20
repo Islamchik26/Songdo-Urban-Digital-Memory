@@ -1,0 +1,94 @@
+erDiagram
+    core__event_audit_log["core.event_audit_log"] {
+        bigint audit_id PK
+        varchar(32) domain_schema
+        varchar(64) table_name
+        varchar(64) entity_id
+        varchar(16) action
+        timestamptz observed_at
+        timestamptz received_at
+        timestamptz recorded_at
+        varchar(32) source_lineage FK
+        varchar(64) actor
+        jsonb payload_snapshot
+    }
+    core__ingestion_batches["core.ingestion_batches"] {
+        bigint batch_id PK
+        varchar(32) source_id FK
+        varchar(32) domain_schema
+        varchar(64) target_table
+        varchar(64) adapter_name
+        varchar(16) status
+        int rows_received
+        int rows_loaded
+        int rows_duplicate
+        int rows_quarantined
+        timestamptz started_at
+        timestamptz finished_at "nullable"
+    }
+    core__places["core.places"] {
+        varchar(64) place_id PK
+        varchar(255) name_ko
+        varchar(255) name_en "nullable"
+        varchar(64) category
+        varchar(255) road_address "nullable"
+        geometry geom
+        bool is_in_songdo "generated, nullable"
+        varchar(32) provenance FK
+        timestamptz created_at
+    }
+    core__quarantine_records["core.quarantine_records"] {
+        bigint quarantine_id PK
+        bigint batch_id FK "nullable"
+        varchar(32) source_id FK
+        varchar(32) domain_schema
+        varchar(64) target_table
+        varchar(32) reason_code
+        text reason_detail
+        jsonb payload
+        character(64) payload_sha256
+        timestamptz received_at
+        timestamptz recorded_at
+        timestamptz resolved_at "nullable"
+        text resolution_note "nullable"
+    }
+    core__source_registry["core.source_registry"] {
+        varchar(32) source_id PK
+        varchar(255) title_ko
+        varchar(255) title_en
+        varchar(128) provider
+        varchar(512) source_url "nullable"
+        smallint verification_level
+        varchar(32) provenance
+        varchar(255) fallback_strategy
+        text notes "nullable"
+        timestamptz created_at
+    }
+    core__staging_records["core.staging_records"] {
+        bigint staging_id PK
+        bigint batch_id FK
+        varchar(32) source_id FK
+        varchar(32) domain_schema
+        varchar(64) target_table
+        jsonb payload
+        character(64) payload_sha256
+        varchar(16) status
+        varchar(64) entity_id "nullable"
+        timestamptz observed_at
+        timestamptz received_at
+        timestamptz recorded_at
+    }
+    core__study_areas["core.study_areas"] {
+        varchar(32) area_id PK
+        varchar(255) name_ko
+        varchar(255) name_en
+        geometry geom
+        timestamptz created_at
+    }
+    core__source_registry ||--o{ core__event_audit_log : "source_lineage"
+    core__source_registry ||--o{ core__ingestion_batches : "source_id"
+    core__source_registry ||--o{ core__places : "provenance"
+    core__ingestion_batches |o--o{ core__quarantine_records : "batch_id"
+    core__source_registry ||--o{ core__quarantine_records : "source_id"
+    core__ingestion_batches ||--o{ core__staging_records : "batch_id"
+    core__source_registry ||--o{ core__staging_records : "source_id"

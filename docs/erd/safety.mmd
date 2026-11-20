@@ -1,0 +1,70 @@
+erDiagram
+    safety__facilities["safety.facilities"] {
+        varchar(32) facility_id PK
+        varchar(255) facility_name_ko
+        varchar(255) facility_name_en "nullable"
+        varchar(24) facility_type
+        varchar(8) responder
+        varchar(255) road_address "nullable"
+        geometry geom
+        varchar(32) source_id FK
+        timestamptz created_at
+    }
+    safety__incident_status_history["safety.incident_status_history"] {
+        bigint history_id PK
+        varchar(32) incident_id FK
+        varchar(12) from_status "nullable"
+        varchar(12) to_status
+        timestamptz changed_at
+        varchar(64) actor
+        varchar(32) facility_id FK "nullable"
+        text note "nullable"
+        timestamptz recorded_at
+    }
+    safety__incident_types["safety.incident_types"] {
+        varchar(24) type_code PK
+        varchar(64) name_ko
+        varchar(64) name_en
+        varchar(8) responder
+        int default_restriction_radius_m
+    }
+    safety__incidents["safety.incidents"] {
+        varchar(32) incident_id PK
+        varchar(24) type_code FK
+        varchar(255) title
+        varchar(8) severity FK
+        varchar(12) current_status
+        timestamptz reported_at
+        varchar(32) assigned_facility_id FK "nullable"
+        int restriction_radius_m
+        bool is_drill
+        geometry geom
+        varchar(32) source_id FK
+        timestamptz created_at
+    }
+    safety__response_drills["safety.response_drills"] {
+        bigint drill_id PK
+        varchar(32) incident_id FK, UK
+        varchar(32) facility_id FK
+        timestamptz held_at
+        int target_seconds
+        int response_seconds
+        bool passed "generated, nullable"
+    }
+    safety__severity_levels["safety.severity_levels"] {
+        varchar(8) severity PK
+        smallint severity_rank UK
+        int sla_target_seconds
+    }
+    core__source_registry["core.source_registry"] {
+        varchar(32) source_id PK
+    }
+    core__source_registry ||--o{ safety__facilities : "source_id"
+    safety__facilities |o--o{ safety__incident_status_history : "facility_id"
+    safety__incidents ||--o{ safety__incident_status_history : "incident_id"
+    safety__facilities |o--o{ safety__incidents : "assigned_facility_id"
+    safety__severity_levels ||--o{ safety__incidents : "severity"
+    core__source_registry ||--o{ safety__incidents : "source_id"
+    safety__incident_types ||--o{ safety__incidents : "type_code"
+    safety__facilities ||--o{ safety__response_drills : "facility_id"
+    safety__incidents ||--o| safety__response_drills : "incident_id"

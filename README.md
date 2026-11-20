@@ -178,6 +178,18 @@ results to `outputs/evidence/` (start with its `README.md`):
 Your working database is never touched; the two evidence databases are dropped at the end
 (`--keep` keeps them). The backup file goes to `outputs/` and is not committed.
 
+## ER diagrams
+
+```bash
+python scripts/erd.py              # reads the live catalog -> docs/erd/ (Markdown, Mermaid, PDF)
+```
+
+[`docs/erd/README.md`](docs/erd/README.md) has a schema map, one crow's-foot ER diagram per schema
+(every table, column, type, PK/FK/unique key and cardinality), the lineage of the cross-domain views,
+and a table of every key, exclusion constraint and trigger. GitHub renders the diagrams directly; the
+PDFs are used by the handbook. Rerun the script after any schema change. Rendering the PDFs needs
+Chrome or Edge and internet access (mermaid.js from a CDN); `--no-render` skips them.
+
 ## Handbook
 
 `main.tex` is the project handbook: architecture, sources, every scenario, API, consumers,
