@@ -1,21 +1,21 @@
 # Clean build of songdo_evidence from the repository
-# 2026-11-16 18:37:46 +0900
+# 2026-11-21 01:39:40 +0900
 # command per file: psql -X -q -v ON_ERROR_STOP=1 -d songdo_evidence -f <file>
 
-ok   sql/00_init_database.sql             exit 0     1123 ms
-ok   sql/01_core_schema.sql               exit 0      333 ms
+ok   sql/00_init_database.sql             exit 0      599 ms
+ok   sql/01_core_schema.sql               exit 0      114 ms
       | psql:C:/Users/123/Documents/GitHub/Songdo-Urban-Digital-Memory/sql/01_core_schema.sql:187: NOTICE:  trigger "trg_audit_no_update_delete" for relation "core.event_audit_log" does not exist, skipping
       | psql:C:/Users/123/Documents/GitHub/Songdo-Urban-Digital-Memory/sql/01_core_schema.sql:192: NOTICE:  trigger "trg_audit_no_truncate" for relation "core.event_audit_log" does not exist, skipping
-ok   sql/02_db1_mobility.sql              exit 0      212 ms
-ok   sql/03_db2_building.sql              exit 0      228 ms
-ok   sql/04_db3_tourism.sql               exit 0      190 ms
-ok   sql/05_db4_environment.sql           exit 0      212 ms
-ok   sql/06_db5_safety.sql                exit 0      318 ms
+ok   sql/02_db1_mobility.sql              exit 0      121 ms
+ok   sql/03_db2_building.sql              exit 0      131 ms
+ok   sql/04_db3_tourism.sql               exit 0      103 ms
+ok   sql/05_db4_environment.sql           exit 0      106 ms
+ok   sql/06_db5_safety.sql                exit 0      110 ms
       | psql:C:/Users/123/Documents/GitHub/Songdo-Urban-Digital-Memory/sql/06_db5_safety.sql:136: NOTICE:  trigger "trg_history_append_only" for relation "safety.incident_status_history" does not exist, skipping
       | psql:C:/Users/123/Documents/GitHub/Songdo-Urban-Digital-Memory/sql/06_db5_safety.sql:189: NOTICE:  trigger "trg_incidents_status_guard" for relation "safety.incidents" does not exist, skipping
       | psql:C:/Users/123/Documents/GitHub/Songdo-Urban-Digital-Memory/sql/06_db5_safety.sql:194: NOTICE:  trigger "trg_incidents_status_log" for relation "safety.incidents" does not exist, skipping
-ok   sql/07_cross_domain_views.sql        exit 0      317 ms
-ok   fixtures/seed_data.sql               exit 0    15550 ms
+ok   sql/07_cross_domain_views.sql        exit 0      110 ms
+ok   fixtures/seed_data.sql               exit 0     6141 ms
       | refresh_hourly_summaries 
       | --------------------------
       |                       720
@@ -28,12 +28,12 @@ ok   fixtures/seed_data.sql               exit 0    15550 ms
       | 
       |          view_name          | row_count | duration_ms 
       | ----------------------------+-----------+-------------
-      |  mv_facility_response_stats |        40 |       184.3
-      |  mv_stop_hourly_service     |       612 |        65.2
-      |  mv_place_context           |        15 |       132.5
+      |  mv_facility_response_stats |        40 |        73.9
+      |  mv_stop_hourly_service     |       612 |        24.6
+      |  mv_place_context           |        15 |        45.0
       | (3 rows)
 
-total 18.7 s
+total 7.7 s
 
 schema objects:
   tables                 39

@@ -229,11 +229,11 @@ time~$T$?'' as well as ``what is the state now?''.
   \item An \textbf{ingestion pipeline} that validates, deduplicates (SHA-256), quarantines
     bad input with a reason code, loads, and writes an append-only audit entry, all in one
     transaction per record.
-  \item A \textbf{FastAPI service} with 49 documented paths, \textbf{three downstream
+  \item A \textbf{FastAPI service} with 53 documented paths, \textbf{three downstream
     consumers} that use only the API, and an \textbf{integrated web console} that can run
     every task.
   \item An \textbf{evidence kit}: one command rebuilds the database from scratch and proves
-    the platform: 65 automated tests, 32 acceptance checks, backup and restore, index
+    the platform: 72 automated tests, 32 acceptance checks, backup and restore, index
     benchmarks, API contract tests and a browser run of every task.
   \item A \textbf{public deployment} (Neon PostgreSQL + Render) of the same code.
 \end{itemize}
@@ -253,12 +253,12 @@ the evidence run.
 Gate & Result & Evidence \\
 \midrule
 Database and PostGIS start successfully & \pass & PostgreSQL 18.3, PostGIS 3.7.0 (local); PostgreSQL 18.7, PostGIS 3.6.4 (hosted) \\
-All migration files run in dependency order & \pass & 9 files with \cmd{psql -v ON_ERROR_STOP=1}, all exit 0, 18.7 s \\
+All migration files run in dependency order & \pass & 9 files with \cmd{psql -v ON_ERROR_STOP=1}, all exit 0, 7.7 s \\
 Seed data load produces no FK/CHECK failures & \pass & 111,543 rows in 39 tables \\
 At least one invalid record is quarantined & \pass & Out-of-bounds, swapped coordinates, unknown vehicle, fault readings, invalid severity \\
 At least one spatial query uses a GiST index & \pass & 8 tasks use a GiST index in \cmd{EXPLAIN ANALYZE} \\
-FastAPI docs open and endpoints validate input & \pass & 24 of 24 contract cases (2xx, 401, 404, 409, 422) \\
-Automated tests pass without manual editing & \pass & 65 tests, OK, 10.3 s \\
+FastAPI docs open and endpoints validate input & \pass & 37 of 37 contract cases (2xx, 401, 404, 409, 422) \\
+Automated tests pass without manual editing & \pass & 72 tests, OK, 5.2 s \\
 Backup and restore into a fresh database & \pass & \cmd{pg_dump -Fc} \ra{} \code{pg_restore}: 63 of 63 comparisons identical \\
 \bottomrule
 \end{tabularx}
@@ -420,7 +420,7 @@ Songdo-Urban-Digital-Memory/
   ui/                         React + Vite + Leaflet console (served by FastAPI from ui/dist)
   scripts/                    setup_db.py, ingest_bus_stops.py, ingest_airkorea.py,
                               evidence.py, evidence_acceptance.py
-  tests/test_platform.py      65 tests
+  tests/test_platform.py      72 tests
   outputs/evidence/           generated evidence (reports, CSV, plans, screenshots)
   source_registry.csv         master data registry
   Dockerfile, render.yaml, compose.yaml, DEPLOY.md, README.md
@@ -1152,7 +1152,7 @@ every device's station is the true nearest one.
 \subsection{Conventions}
 
 \begin{itemize}
-  \item Interactive documentation at \code{/docs} (OpenAPI, 49 paths).
+  \item Interactive documentation at \code{/docs} (OpenAPI, 53 paths).
   \item Write endpoints require the header \code{X-API-Token}; without it they return 401.
   \item Ingestion endpoints return \cmd{202 Accepted} with \code{LOADED},
     \code{DUPLICATE} or \code{QUARANTINED} and the batch counters. Malformed requests get
@@ -1199,11 +1199,40 @@ POST & \code{/safety/incidents}, \code{/safety/incidents/<id>/transition} & DB5-
 GET & \code{/cross/attractions-near-stops}, \code{/cross/building-context/<id>}, \code{/cross/incident-impact} & X-1/2/3 \\
 GET & \code{/cross/place-context}, \code{/cross/facility-response-stats}, \code{/cross/freshness} & X-4/5/6 \\
 POST & \code{/cross/refresh}: refresh materialized views & X \\
+PATCH & \code{/core/places/<id>}, \code{/tourism/attractions/<id>}, \code{/tourism/events/<id>}, \code{/building/devices/<id>}: correct fields & edits \\
+DELETE & same paths: delete if unreferenced (places, attractions), cancel (events), retire (devices) & edits \\
 GET/POST & \code{/scenarios}, \code{/scenarios/<id>/run}: list and run any task & all \\
 GET/POST & \code{/system/map/layers}, \code{/system/map/frame}, \code{/system/activity}, \code{/system/verification}, \code{/system/run-tests} & console \\
 \bottomrule
 \end{xltabular}
 \endgroup
+
+\subsection{Corrections and retirement}\label{sec:edits}
+
+Reference data can be corrected (\code{PATCH}) and removed (\code{DELETE}). The platform is an
+urban memory, so what ``delete'' means depends on the kind of data:
+
+\begin{center}\small
+\begin{tabularx}{\linewidth}{@{}p{3.6cm}XX@{}}
+\toprule
+Kind of data & PATCH & DELETE \\
+\midrule
+Places, attractions & Changed fields are written & Removed only when nothing refers to the row, otherwise 409; the audit entry keeps the full deleted row \\
+Events & Changed fields are written & Soft delete: \code{is_cancelled = true}, the row stays \\
+Devices & Fields and status (\code{ACTIVE}, \code{FAULT}, \code{MAINTENANCE}); a retired device is not edited (409) & Retire: status \code{RETIRED} and the open location interval closed now, so where the device was in the past is unchanged \\
+History (GPS, telemetry, measurements) & Never edited in place; a corrected reading is re-sent through ingestion and replaces the value (DB4-3) & Not allowed \\
+Audit ledger, status history & Blocked by trigger & Blocked by trigger \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+Every change runs in one transaction (\code{api/edits.py}): the row is locked with
+\cmd{SELECT ... FOR UPDATE}, compared with the request, written, and recorded with
+\code{core.log_event()}, whose entry holds the old and new values. A \code{PATCH} that changes
+nothing returns \code{UNCHANGED} and writes nothing. If the audit write fails, the change is rolled
+back as well. Coordinates are checked against the Songdo box (422), and the database's own
+constraints still apply: for example, parking spaces without parking or an event ending before
+it starts is rejected with 409.
 
 \subsection{Scenario registry}
 
@@ -1253,7 +1282,7 @@ Page & Function \\
 \midrule
 Tasks & All 36 tasks, searchable. Pick one, edit its parameters, run it: rows, the SQL that ran, the query plan, and a map when the result has coordinates. \\
 City map & Stops, routes, stations, attractions, buildings and facilities. A time slider rebuilds the city at any moment from history: vehicles, incidents in their status at that time, PM2.5 grade per station, active air alerts. Live mode refreshes every 2 s. \\
-Ingest & Eight forms, one per data-entry endpoint: a new place, a GPS fix, a building reading, a device relocation, a new attraction, an air reading, an incident report and a status change, each with valid and invalid presets. Shows the outcome and the batch, quarantine and audit rows written. \\
+Ingest & Eight forms, one per data-entry endpoint: a new place, a GPS fix, a building reading, a device relocation, a new attraction, an air reading, an incident report and a status change, each with valid and invalid presets. A ninth tab, \emph{Edit / retire}, corrects or deletes places, attractions, events and devices (Section~\ref{sec:edits}). Shows the outcome and the batch, quarantine and audit rows written. \\
 Verify & 28 live platform checks (schemas, rows, views, freshness, ledger triggers, indexes, constraints) and a button that runs the test suite. \\
 \bottomrule
 \end{tabularx}
@@ -1275,7 +1304,7 @@ or \code{#/map?t=18:20}.
 
 \subsection{Automated test suite}
 
-\cmd{python -m unittest tests/test_platform.py} runs 65 tests in about 10 seconds. Every
+\cmd{python -m unittest tests/test_platform.py} runs 72 tests in about 5 seconds. Every
 database test runs inside a transaction that is rolled back, so the suite leaves no trace
 and can run against any copy of the database.
 
@@ -1287,10 +1316,11 @@ Test class & Tests & What it covers \\
 CoordinateValidationTests & 4 & Valid point, out of bounds, swapped, malformed \\
 PayloadHashTests, AirKoreaParsingTests & 3 & Key-order-independent hash, UTF-8, 24:00, six readings per row \\
 ScenarioRegistryTests & 2 & All 25 scenarios registered, every ready one has SQL \\
-ApiValidationTests & 22 & 422/401 handling, every scenario runs with defaults, each domain's endpoints, console and consumer endpoints \\
+ApiValidationTests & 23 & 422/401/404 handling (including edits), every scenario runs with defaults, each domain's endpoints, console and consumer endpoints \\
 DatabaseTests & 4 & Bounding box function, pipeline, append-only ledger, GiST index use \\
 Mobility- \dots{} SafetyDatabaseTests & 21 & Domain constraints, adapters, state machine, alerts, drills \\
 CrossDomainDatabaseTests & 4 & Materialized view equals live query, logged refresh, index use \\
+EditDatabaseTests & 6 & PATCH writes and audits only real changes; delete only when unreferenced; cancel and retire keep history; a failed audit rolls the change back \\
 ConsumerTests & 5 & Bounded queue, route driver, fault injection, time parsing, retry policy \\
 \bottomrule
 \end{tabularx}
@@ -1374,7 +1404,7 @@ X-MV & Materialized view equals live aggregate after a logged refresh & \pass \\
 \subsection{API contract}
 
 \begin{center}\small
-\begin{tabularx}{\linewidth}{@{}Xll@{}}
+\begin{tabularx}{\linewidth}{@{}Xp{4.2cm}p{4.2cm}@{}}
 \toprule
 Case & Expected & Actual \\
 \midrule
@@ -1387,6 +1417,11 @@ REPORTED \ra{} RESOLVED; CLOSED \ra{} DISPATCHED & 409 & 409 \\
 REPORTED \ra{} DISPATCHED & 200 & 200, 2 history rows \\
 Unknown task; bad parameter; negative radius & 404; 422; 422 & as expected \\
 12 identical packets at once & 1 stored row & 1 LOADED, 11 DUPLICATE \\
+PATCH a place, then the same value again & 200 UPDATED, then UNCHANGED & 1 audit entry \\
+PATCH outside Songdo; unknown field; unknown place & 422; 422; 404 & as expected \\
+DELETE a place in use; an unreferenced place & 409; 200 DELETED & row kept; row gone, full row in audit \\
+DELETE an event; a device & 200 CANCELLED; 200 RETIRED & row kept; location closed, history kept \\
+PATCH a retired device; parking without parking & 409; 409 & as expected \\
 \bottomrule
 \end{tabularx}
 \end{center}
@@ -1410,9 +1445,9 @@ with the indexes (median of 5 runs) and with index scans disabled (median of 3 r
 \toprule
 Query (1,000,000 rows) & With index (ms) & Without (ms) & Speed-up \\
 \midrule
-Radius search: fixes within 150 m of a point (GiST on \code{geography}) & 56.65 & 1,577.5 & 28$\times$ \\
-Point-in-time replay: last fix of 50 vehicles at $T$ (B-tree \cmd{(vehicle_id, observed_at)}) & 1.79 & 8,318.9 & 4,658$\times$ \\
-Time window: fixes in a 5-minute interval (B-tree \code{observed_at}) & 1.58 & 107.0 & 68$\times$ \\
+Radius search: fixes within 150 m of a point (GiST on \code{geography}) & 29.42 & 733.1 & 25$\times$ \\
+Point-in-time replay: last fix of 50 vehicles at $T$ (B-tree \cmd{(vehicle_id, observed_at)}) & 1.30 & 3,847.7 & 2,961$\times$ \\
+Time window: fixes in a 5-minute interval (B-tree \code{observed_at}) & 1.22 & 58.1 & 48$\times$ \\
 \bottomrule
 \end{tabularx}
 \end{center}
@@ -1424,11 +1459,11 @@ Time window: fixes in a 5-minute interval (B-tree \code{observed_at}) & 1.58 & 1
 \toprule
 Query & Planner (ms) & No index (ms) & Speed-up \\
 \midrule
-Stops within 1,000 m (513 stops, \code{idx_stops_geog}) & 1.19 & 2.61 & 2.2$\times$ \\
-GPS points within 150 m (20,238 rows, \code{idx_obs_geog}) & 9.71 & 79.34 & 8.2$\times$ \\
-Last position of each vehicle at $T$ & 1.07 & 75.14 & 70.1$\times$ \\
-Status history of one incident (49,421 rows) & 0.62 & 9.46 & 15.3$\times$ \\
-Audit history of one entity (empty table: planner picks a sequential scan) & 0.52 & 0.53 & 1.0$\times$ \\
+Stops within 1,000 m (513 stops, \code{idx_stops_geog}) & 0.42 & 1.22 & 2.9$\times$ \\
+GPS points within 150 m (20,238 rows, \code{idx_obs_geog}) & 4.61 & 36.20 & 7.9$\times$ \\
+Last position of each vehicle at $T$ & 0.99 & 46.77 & 47.2$\times$ \\
+Status history of one incident (49,421 rows) & 0.18 & 4.97 & 27.4$\times$ \\
+Audit history of one entity (small table: the index costs more than it saves) & 0.29 & 0.17 & 0.6$\times$ \\
 \bottomrule
 \end{tabularx}
 \end{center}
@@ -1453,11 +1488,11 @@ the plan prepared while indexes were enabled. The benchmark now connects with
 
 \subsection{Query latency}
 
-All 36 tasks have a median below 115 ms on the fixture data. The slowest is DB5-4B
-(DBSCAN over 10,000 incidents, 114 ms). In total, 34 tasks run in under 35 ms and 27 in
+All 36 tasks have a median below 55 ms on the fixture data. The slowest is DB5-4B
+(DBSCAN over 10,000 incidents, 52 ms). In total, 34 tasks run in under 20 ms and 31 in
 under 10 ms. Through the HTTP API, the 50th percentile of the measured endpoints is
-between 4 and 25 ms. The spatial lookups targeted by the handbook (CORE-1, DB1-5,
-nearby stops) take 1--6 ms, below the 20 ms target. These timings come from one laptop:
+between 2 and 14 ms. The spatial lookups targeted by the handbook (CORE-1, DB1-5,
+nearby stops) take 0.4--3 ms, below the 20 ms target. These timings come from one laptop:
 they show plan shape and relative cost, not production capacity.
 
 % =============================================================================
@@ -1469,7 +1504,7 @@ createdb -h localhost -p 5433 -U songdo_admin songdo_restore_test
 pg_restore -h localhost -p 5433 -U songdo_admin -d songdo_restore_test --exit-on-error outputs/songdo.backup
 \end{lstlisting}
 
-In the evidence run the dump took 1.6 s (2.6 MB) and the restore 6.4 s. All 63 comparisons
+In the evidence run the dump took 0.7 s (2.5 MB) and the restore 2.8 s. All 63 comparisons
 between the original and the restored database are identical:
 
 \begin{itemize}
@@ -1488,8 +1523,8 @@ are therefore schema-qualified (\code{public.ST_Covers}).
 \subsection{Clean clone in under 90 seconds}
 
 The final exit gate asks that a clean clone builds the database and passes the tests in
-under 90 seconds. The evidence run measured 18.7 s for all migrations and the seed, plus
-10.3 s for the 65 tests: about 29 s in total.
+under 90 seconds. The evidence run measured 7.7 s for all migrations and the seed, plus
+5.2 s for the 72 tests: about 13 s in total.
 
 \subsection{Determinism}
 
@@ -1633,6 +1668,12 @@ Ismoiljonov Boburjon & 12244956 & Member & DB5 Safety \& Incident \\
     A plain refresh takes an exclusive lock, and readers wait. \code{CONCURRENTLY} builds
     the new contents beside the old and swaps the differences. It needs a unique index on
     the view, and it keeps the read API available during a refresh.}
+\qa{Can data be updated or deleted?}{%
+    Reference data can be corrected with \code{PATCH} and removed with \code{DELETE}, each with an
+    audit entry holding the old and new values. A place or attraction is deleted only when nothing
+    refers to it; an event is cancelled and a device retired instead, because deleting them would
+    erase history. Measurements and GPS fixes are never edited in place: a correction is ingested as
+    a new packet that replaces the value, and the audit log records it (Section~\ref{sec:edits}).}
 \qa{How is ``the state of the city at time $T$'' reconstructed?}{%
     Nothing is overwritten. GPS fixes, status changes and device stays are all history
     rows. For any $T$ the query takes, per entity, the latest row at or before $T$

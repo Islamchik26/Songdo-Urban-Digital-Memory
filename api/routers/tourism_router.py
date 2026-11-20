@@ -1,14 +1,16 @@
 """/api/v1/tourism — attractions, open-now search, events, visitor numbers, attraction ingestion."""
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, time
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
-from pydantic import AwareDatetime, BaseModel, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 from adapters.tourism_adapter import AttractionsAdapter
+from api import edits
 from api.database import fetch_all, fetch_one, pool
+from api.edits import run_edit
 from api.routers.core_router import require_token
 
 router = APIRouter(prefix="/api/v1/tourism", tags=["tourism"])
@@ -127,3 +129,56 @@ def ingest_attractions(items: Annotated[list[AttractionIn], Body(min_length=1, m
     with pool.connection() as conn:
         summary = AttractionsAdapter(conn, actor="API").ingest([i.model_dump() for i in items])
     return summary.as_dict()
+
+
+# --------------------------------------------------------------------------- corrections
+class AttractionPatch(BaseModel):
+    """Only the fields sent are changed. Send null to clear an optional field."""
+    model_config = ConfigDict(extra="forbid")
+    attraction_name_ko: str | None = Field(None, min_length=1, max_length=255)
+    attraction_name_en: str | None = Field(None, max_length=255)
+    category: str | None = Field(None, pattern="^(PARK|CULTURE|CONVENTION|SHOPPING|LANDMARK)$")
+    road_address: str | None = Field(None, max_length=255)
+    is_wheelchair_accessible: bool | None = None
+    has_parking: bool | None = None
+    parking_spaces: int | None = Field(None, gt=0)
+    admission_fee_krw: int | None = Field(None, ge=0)
+    lon: float | None = Field(None, ge=-180, le=180)
+    lat: float | None = Field(None, ge=-90, le=90)
+
+
+class EventPatch(BaseModel):
+    """Only the fields sent are changed. Cancelling is DELETE, which keeps the event."""
+    model_config = ConfigDict(extra="forbid")
+    event_name_ko: str | None = Field(None, min_length=1, max_length=255)
+    event_name_en: str | None = Field(None, max_length=255)
+    event_type: str | None = Field(None, pattern="^(CONFERENCE|FESTIVAL|EXHIBITION|CONCERT)$")
+    start_date: date | None = None
+    end_date: date | None = None
+    daily_start_time: time | None = None
+    daily_end_time: time | None = None
+    expected_attendance: int | None = Field(None, gt=0)
+
+
+@router.patch("/attractions/{attraction_id}", dependencies=[Depends(require_token)],
+              summary="Correct an attraction: changed fields are written with an audit entry")
+def patch_attraction(attraction_id: str, body: AttractionPatch) -> dict[str, Any]:
+    return run_edit(edits.update, edits.ATTRACTION, attraction_id, body.model_dump(mode="json", exclude_unset=True))
+
+
+@router.delete("/attractions/{attraction_id}", dependencies=[Depends(require_token)],
+               summary="Delete an attraction; refused (409) while events, hours or visitor counts refer to it")
+def delete_attraction(attraction_id: str) -> dict[str, Any]:
+    return run_edit(edits.delete, edits.ATTRACTION, attraction_id)
+
+
+@router.patch("/events/{event_id}", dependencies=[Depends(require_token)],
+              summary="Correct an event (dates, times, attendance...) with an audit entry")
+def patch_event(event_id: str, body: EventPatch) -> dict[str, Any]:
+    return run_edit(edits.update, edits.EVENT, event_id, body.model_dump(mode="json", exclude_unset=True))
+
+
+@router.delete("/events/{event_id}", dependencies=[Depends(require_token)],
+               summary="Cancel an event (soft delete): the row is kept with is_cancelled = true")
+def delete_event(event_id: str) -> dict[str, Any]:
+    return run_edit(edits.delete, edits.EVENT, event_id)

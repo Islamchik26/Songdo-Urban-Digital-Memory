@@ -626,6 +626,41 @@ def step_api(server: Server) -> None:
                                       "WHERE incident_id = 'INC-EVD-API-1'")) == 2, f"{n} history rows"))
     case("CLOSED incident -> DISPATCHED", "409", "POST", "/api/v1/safety/incidents/INC-20261002-0001/transition",
          {"to_status": "DISPATCHED", "facility_id": "FAC_POLICE_SONGDO1"}, token)
+    # corrections and retirement of reference data (api/edits.py)
+    places = "/api/v1/core/places"
+    audit_q = "SELECT count(*) FROM core.event_audit_log WHERE table_name = %s AND entity_id = %s AND action = %s"
+    case("add a place to edit", "202", "POST", places,
+         [{"place_id": "PLC_EVD_EDIT", "name_ko": "증거 편집 장소", "category": "LANDMARK", "lon": 126.6405, "lat": 37.3905}],
+         token)
+    case("PATCH place without token", "401", "PATCH", f"{places}/PLC_EVD_EDIT", {"name_en": "x"})
+    case("PATCH place: rename", "200 UPDATED", "PATCH", f"{places}/PLC_EVD_EDIT", {"name_en": "Evidence place"}, token,
+         lambda: ((n := _count(audit_q, ("places", "PLC_EVD_EDIT", "UPDATE"))) == 1, f"{n} UPDATE audit entry"))
+    case("PATCH place: same value again", "200 UNCHANGED", "PATCH", f"{places}/PLC_EVD_EDIT",
+         {"name_en": "Evidence place"}, token,
+         lambda: ((n := _count(audit_q, ("places", "PLC_EVD_EDIT", "UPDATE"))) == 1, f"still {n} audit entry"))
+    case("PATCH place: move outside Songdo", "422", "PATCH", f"{places}/PLC_EVD_EDIT", {"lon": 126.978}, token)
+    case("PATCH place: unknown field", "422", "PATCH", f"{places}/PLC_EVD_EDIT", {"population": 5}, token)
+    case("PATCH unknown place", "404", "PATCH", f"{places}/PLC_NOPE", {"name_en": "x"}, token)
+    case("DELETE place still in use", "409", "DELETE", f"{places}/PLC_CONVENSIA", None, token,
+         lambda: ((n := _count("SELECT count(*) FROM core.places WHERE place_id = 'PLC_CONVENSIA'")) == 1,
+                  f"{n} row kept"))
+    case("DELETE unreferenced place", "200 DELETED", "DELETE", f"{places}/PLC_EVD_EDIT", None, token,
+         lambda: ((g := _count("SELECT count(*) FROM core.places WHERE place_id = 'PLC_EVD_EDIT'")) == 0
+                  and (a := _count("SELECT count(*) FROM core.event_audit_log WHERE entity_id = 'PLC_EVD_EDIT' "
+                                   "AND action = 'DELETE' AND payload_snapshot ? 'deleted_row'")) == 1,
+                  f"{g} rows left, {a} DELETE audit entry with the full row"))
+    case("PATCH attraction: parking spaces without parking", "409", "PATCH",
+         "/api/v1/tourism/attractions/ATT_HANOK_VILLAGE", {"parking_spaces": 10}, token)
+    case("DELETE event (cancel, row kept)", "200 CANCELLED", "DELETE", "/api/v1/tourism/events/EVT_SKYLINE_PHOTO",
+         None, token, lambda: ((n := _count("SELECT count(*) FROM tourism.events WHERE event_id = 'EVT_SKYLINE_PHOTO' "
+                                             "AND is_cancelled")) == 1, f"{n} row kept, is_cancelled"))
+    case("DELETE device (retire)", "200 RETIRED", "DELETE", "/api/v1/building/devices/DEV-CV-PWR-01", None, token,
+         lambda: ((n := _count("SELECT count(*) FROM building.device_space_assignments WHERE device_id = 'DEV-CV-PWR-01' "
+                               "AND unassigned_at IS NULL")) == 0
+                  and (h := _count("SELECT count(*) FROM building.device_space_assignments "
+                                   "WHERE device_id = 'DEV-CV-PWR-01'")) > 0,
+                  f"{n} open locations, {h} history rows kept"))
+    case("PATCH retired device", "409", "PATCH", "/api/v1/building/devices/DEV-CV-PWR-01", {"model": "X"}, token)
     case("unknown task", "404", "POST", "/api/v1/scenarios/DB9-9/run", {"params": {}})
     case("task with bad parameter", "422", "POST", "/api/v1/scenarios/DB1-3/run", {"params": {"as_of": "noon"}})
     case("query out of range", "422", "GET", "/api/v1/core/places/nearby?radius_m=-5")

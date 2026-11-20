@@ -105,7 +105,7 @@ The console has four pages:
 |---|---|
 | **Tasks** | All 36 tasks. Pick one, change its parameters, run it: rows, the SQL that ran, the query plan, and a map for results with coordinates. |
 | **City map** | Stops, routes, stations, attractions, buildings, safety facilities. A time slider rebuilds the city at any moment from history: vehicles, incidents in their status at that time, PM2.5 per station, air alerts. **Live** mode refreshes every 2 s. |
-| **Ingest** | Forms for a new place, GPS, building sensor, device relocation, a new attraction, air reading, incident report and status change, with good and bad presets. Shows the outcome (loaded, quarantined, duplicate, rejected) and the batch, quarantine and audit rows written. |
+| **Ingest** | Forms for a new place, GPS, building sensor, device relocation, a new attraction, air reading, incident report and status change, with good and bad presets. The **Edit / retire** tab corrects or deletes places, attractions, events and devices. Shows the outcome (loaded, quarantined, duplicate, rejected) and the batch, quarantine and audit rows written. |
 | **Verify** | 28 live checks (schemas, rows per domain, views, materialized view freshness, ledger triggers, indexes, constraints, quarantine, provenance, backup) and a button that runs the test suite. |
 
 Links can open a page in a given state: `#/tasks?task=DB5-2&run=1&view=map`, `#/map?t=18:20`,
@@ -144,6 +144,11 @@ current time (the fixture day is not touched); `python scripts/setup_db.py --res
   fails, because it runs with an empty `search_path`.
 - **Scenario SQL is read-only.** It runs in a `READ ONLY` transaction with bound parameters.
 - **Write endpoints need a token**: header `X-API-Token` (value of `INGEST_API_TOKEN` in `.env`).
+- **Corrections and deletes** (`api/edits.py`): `PATCH` / `DELETE` on `/api/v1/core/places/{id}`,
+  `/api/v1/tourism/attractions/{id}`, `/api/v1/tourism/events/{id}` and `/api/v1/building/devices/{id}`.
+  Each change is audited with old and new values. A place or attraction is deleted only when nothing refers
+  to it (otherwise 409); deleting an event cancels it and deleting a device retires it, so history is kept.
+  History tables (GPS, telemetry, measurements) are never edited in place.
 - **Local stack differs from the handbook** (PostgreSQL 18 / PostGIS 3.7 here, 16.3 / 3.4 in the
   handbook). Avoid features newer than PostgreSQL 16. `compose.yaml` and `Dockerfile` follow the
   handbook but have not been run yet.

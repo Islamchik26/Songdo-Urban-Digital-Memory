@@ -5,10 +5,12 @@ from typing import Any
 
 import psycopg
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import AwareDatetime, BaseModel, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 from adapters.building_adapter import BuildingTelemetryAdapter
+from api import edits
 from api.database import fetch_all, fetch_one, pool
+from api.edits import run_edit
 from api.routers.core_router import require_token
 
 router = APIRouter(prefix="/api/v1/building", tags=["building"])
@@ -152,6 +154,10 @@ def device_history(device_id: str) -> list[dict[str, Any]]:
 def relocate_device(device_id: str, body: RelocationIn) -> dict[str, Any]:
     try:
         with pool.connection() as conn:
+            status = conn.execute("SELECT current_status FROM building.devices WHERE device_id = %s",
+                                  (device_id,)).fetchone()
+            if status and status["current_status"] == "RETIRED":
+                raise HTTPException(409, f"device {device_id} is retired and cannot be moved")
             row = conn.execute(
                 "SELECT building.relocate_device(%(device)s, %(space)s, %(at)s, 'API') AS assignment_id",
                 {"device": device_id, "space": body.space_id, "at": body.relocated_at}).fetchone()
@@ -169,3 +175,26 @@ def ingest_telemetry(reading: TelemetryIn) -> dict[str, Any]:
         summary = BuildingTelemetryAdapter(conn, actor="API").ingest([reading.model_dump(mode="json")])
     outcome = "LOADED" if summary.loaded else "QUARANTINED" if summary.quarantined else "DUPLICATE"
     return {"outcome": outcome, **summary.as_dict()}
+
+
+# --------------------------------------------------------------------------- corrections
+class DevicePatch(BaseModel):
+    """Only the fields sent are changed. Retiring is DELETE, which keeps the device and its history."""
+    model_config = ConfigDict(extra="forbid")
+    manufacturer: str | None = Field(None, min_length=1, max_length=64)
+    model: str | None = Field(None, min_length=1, max_length=64)
+    serial_number: str | None = Field(None, min_length=1, max_length=64)
+    protocol: str | None = Field(None, pattern="^(BACNET|MODBUS|MQTT)$")
+    current_status: str | None = Field(None, pattern="^(ACTIVE|FAULT|MAINTENANCE)$")
+
+
+@router.patch("/devices/{device_id}", dependencies=[Depends(require_token)],
+              summary="Correct a device or change its status (ACTIVE, FAULT, MAINTENANCE) with an audit entry")
+def patch_device(device_id: str, body: DevicePatch) -> dict[str, Any]:
+    return run_edit(edits.update, edits.DEVICE, device_id, body.model_dump(mode="json", exclude_unset=True))
+
+
+@router.delete("/devices/{device_id}", dependencies=[Depends(require_token)],
+               summary="Retire a device (soft delete): status RETIRED, current location interval closed now")
+def retire_device(device_id: str) -> dict[str, Any]:
+    return run_edit(edits.delete, edits.DEVICE, device_id)

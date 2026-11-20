@@ -1,21 +1,42 @@
 // Ingestion playground: send good and bad records through the real write path and watch what happens.
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { getActivity, kstText, loadToken, nowKstIso, postJson, saveToken } from "./api";
+import { getActivity, kstText, loadToken, nowKstIso, saveToken, sendJson } from "./api";
 import type { Activity, PostResult, Row } from "./api";
 
 type Kind = "text" | "number" | "select" | "datetime";
-interface Field { name: string; label: string; kind: Kind; options?: string[]; optional?: boolean }
 type Values = Record<string, string>;
-interface Preset { label: string; expect: string; values: () => Values }
+interface Field {
+  name: string; label: string; kind: Kind; optional?: boolean;
+  options?: string[] | ((v: Values) => string[]);   // a function: the choices depend on other fields
+}
+/** IDs of records created on this page, so the edit presets can work on them. */
+interface Ctx { lastIncident: string; lastPlace: string; lastAttraction: string }
+interface Preset { label: string; expect: string; values: (ctx: Ctx) => Values }
+type Method = "POST" | "PATCH" | "DELETE";
 interface FormSpec {
   id: string;
   domain: string;
   title: string;
   explain: string;
+  method?: (v: Values) => Method;   // POST when absent
   path: (v: Values) => string;
   fields: Field[];
   body: (v: Values) => unknown;
   presets: Preset[];
+}
+
+const optionsOf = (f: Field, v: Values): string[] =>
+  typeof f.options === "function" ? f.options(v) : f.options ?? [];
+
+/** After a change, a select whose choices changed falls back to its first choice. */
+function normalize(fields: Field[], v: Values): Values {
+  const out = { ...v };
+  for (const f of fields) {
+    if (f.kind !== "select") continue;
+    const opts = optionsOf(f, out);
+    if (opts.length && !opts.includes(out[f.name])) out[f.name] = opts[0];
+  }
+  return out;
 }
 
 const num = (v: string) => (v.trim() === "" ? null : Number(v));
@@ -24,6 +45,31 @@ const stamp = () => nowKstIso().slice(0, 19) + "+09:00";
 const suffix = () => String(Date.now()).slice(-6);
 
 const bool = (v: string) => (v === "true" ? true : v === "false" ? false : v);
+
+// ---- edit / retire form ---------------------------------------------------
+const EDIT_PATHS: Record<string, string> = {
+  place: "/api/v1/core/places/",
+  attraction: "/api/v1/tourism/attractions/",
+  event: "/api/v1/tourism/events/",
+  device: "/api/v1/building/devices/",
+};
+const EDITABLE: Record<string, string[]> = {
+  place: ["name_ko", "name_en", "category", "road_address", "lon", "lat"],
+  attraction: ["attraction_name_ko", "attraction_name_en", "category", "road_address", "is_wheelchair_accessible",
+    "has_parking", "parking_spaces", "admission_fee_krw", "lon", "lat"],
+  event: ["event_name_ko", "event_name_en", "event_type", "start_date", "end_date", "daily_start_time",
+    "daily_end_time", "expected_attendance"],
+  device: ["current_status", "manufacturer", "model", "serial_number", "protocol"],
+};
+const NUMERIC_FIELDS = new Set(["lon", "lat", "parking_spaces", "admission_fee_krw", "expected_attendance"]);
+const BOOLEAN_FIELDS = new Set(["is_wheelchair_accessible", "has_parking"]);
+/** Empty means null (clears an optional field); numbers and yes/no are sent as JSON numbers and booleans. */
+function editValue(field: string, raw: string): unknown {
+  if (raw.trim() === "") return null;
+  if (NUMERIC_FIELDS.has(field)) return num(raw);
+  if (BOOLEAN_FIELDS.has(field)) return bool(raw.trim().toLowerCase());
+  return raw;
+}
 
 const FORMS: FormSpec[] = [
   {
@@ -260,6 +306,55 @@ const FORMS: FormSpec[] = [
         values: () => ({ incident_id: "INC-20261002-0001", to_status: "DISPATCHED", facility_id: "", note: "" }) },
     ],
   },
+  {
+    id: "edit",
+    domain: "Edit / retire",
+    title: "Correct or retire a record",
+    explain: "Reference data can be corrected (PATCH, one field at a time here) and retired (DELETE). Every change " +
+      "is written with an audit entry holding the old and new values. DELETE removes a place or attraction only " +
+      "when nothing refers to it; an event is cancelled and a device retired, so their history stays. " +
+      "History (GPS, readings) is never edited: a correction is re-sent through ingestion. " +
+      "PATCH / DELETE /api/v1/{core/places | tourism/attractions | tourism/events | building/devices}/{id}",
+    method: (v) => (v.operation === "delete" ? "DELETE" : "PATCH"),
+    path: (v) => `${EDIT_PATHS[v.entity]}${encodeURIComponent(v.record_id)}`,
+    fields: [
+      { name: "entity", label: "Record type", kind: "select", options: Object.keys(EDIT_PATHS) },
+      { name: "record_id", label: "ID", kind: "text" },
+      { name: "operation", label: "Operation", kind: "select", options: ["edit", "delete"] },
+      { name: "field", label: "Field (edit)", kind: "select", options: (v) => EDITABLE[v.entity] ?? [] },
+      { name: "value", label: "New value (edit)", kind: "text", optional: true },
+    ],
+    body: (v) => (v.operation === "delete" ? undefined : { [v.field]: editValue(v.field, v.value) }),
+    presets: [
+      { label: "Rename a place", expect: "UPDATED (again: UNCHANGED)",
+        values: (c) => ({ entity: "place", record_id: c.lastPlace || "PLC_INU", operation: "edit", field: "name_en",
+          value: c.lastPlace ? "Songdo demo plaza (renamed)" : "Incheon National University, Songdo" }) },
+      { label: "Move a place outside Songdo", expect: "REJECTED by API (422)",
+        values: () => ({ entity: "place", record_id: "PLC_INU", operation: "edit", field: "lon", value: "126.9780" }) },
+      { label: "Delete the place you added", expect: "DELETED (row kept in the audit log)",
+        values: (c) => ({ entity: "place", record_id: c.lastPlace, operation: "delete", field: "name_ko", value: "" }) },
+      { label: "Delete a place still in use", expect: "REJECTED by database (409)",
+        values: () => ({ entity: "place", record_id: "PLC_CONVENSIA", operation: "delete", field: "name_ko", value: "" }) },
+      { label: "Change an admission fee", expect: "UPDATED",
+        values: (c) => ({ entity: "attraction", record_id: c.lastAttraction || "ATT_G_TOWER_OBS", operation: "edit",
+          field: "admission_fee_krw", value: "12000" }) },
+      { label: "Parking spaces, no parking", expect: "REJECTED by database (409)",
+        values: () => ({ entity: "attraction", record_id: "ATT_HANOK_VILLAGE", operation: "edit",
+          field: "parking_spaces", value: "10" }) },
+      { label: "Cancel an event", expect: "CANCELLED (row kept)",
+        values: () => ({ entity: "event", record_id: "EVT_SKYLINE_PHOTO", operation: "delete", field: "event_name_ko", value: "" }) },
+      { label: "Event ends before it starts", expect: "REJECTED by database (409)",
+        values: () => ({ entity: "event", record_id: "EVT_TRIBOWL_CONCERT", operation: "edit",
+          field: "end_date", value: "2026-01-01" }) },
+      { label: "Device to maintenance", expect: "UPDATED",
+        values: () => ({ entity: "device", record_id: "DEV-CV-PWR-01", operation: "edit",
+          field: "current_status", value: "MAINTENANCE" }) },
+      { label: "Retire a device", expect: "RETIRED (location closed, history kept)",
+        values: () => ({ entity: "device", record_id: "DEV-CV-PWR-01", operation: "delete", field: "manufacturer", value: "" }) },
+      { label: "Edit a retired device", expect: "REJECTED by database (409)",
+        values: () => ({ entity: "device", record_id: "DEV-CV-TMP-03", operation: "edit", field: "model", value: "X-200" }) },
+    ],
+  },
 ];
 
 interface Sent { id: number; form: string; path: string; payload: unknown; result: PostResult; at: string }
@@ -276,7 +371,8 @@ function outcome(r: PostResult): { label: string; tone: "ok" | "warn" | "bad" | 
     : Number(body.loaded) > 0 ? "LOADED" : Number(body.quarantined) > 0 ? "QUARANTINED"
     : Number(body.duplicates) > 0 ? "DUPLICATE" : "OK";
   const extra = Number(body.new_alerts) > 0 ? ` + ${body.new_alerts} new alert` : "";
-  return { label: o + extra, tone: o === "LOADED" || o === "OK" ? "ok" : o === "QUARANTINED" ? "warn" : "info" };
+  const done = ["LOADED", "OK", "UPDATED", "DELETED", "CANCELLED", "RETIRED"];
+  return { label: o + extra, tone: done.includes(o) ? "ok" : o === "QUARANTINED" ? "warn" : "info" };
 }
 
 function MiniTable({ rows, columns }: { rows: Row[]; columns: [string, string][] }) {
@@ -306,44 +402,57 @@ function MiniTable({ rows, columns }: { rows: Row[]; columns: [string, string][]
 export default function IngestView() {
   const [formId, setFormId] = useState(FORMS[0].id);
   const form = useMemo(() => FORMS.find((f) => f.id === formId)!, [formId]);
-  const [values, setValues] = useState<Values>(() => FORMS[0].presets[0].values());
+  const [ctx, setCtx] = useState<Ctx>({ lastIncident: "", lastPlace: "", lastAttraction: "" });
+  const [values, setValues] = useState<Values>(() => FORMS[0].presets[0].values(ctx));
   const [token, setToken] = useState(loadToken);
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState<Sent[]>([]);
   const [activity, setActivity] = useState<Activity | null>(null);
-  const [lastIncident, setLastIncident] = useState("");
 
   const refresh = useCallback(() => {
     getActivity(12).then(setActivity).catch(() => undefined);
   }, []);
   useEffect(refresh, [refresh]);
 
+  function presetValues(f: FormSpec, p: Preset): Values {
+    const v = p.values(ctx);
+    if (f.id === "transition" && v.incident_id === "" && ctx.lastIncident) v.incident_id = ctx.lastIncident;
+    return normalize(f.fields, v);
+  }
+
   function pickForm(id: string) {
     const f = FORMS.find((x) => x.id === id)!;
     setFormId(id);
-    const v = f.presets[0].values();
-    if (id === "transition" && lastIncident) v.incident_id = lastIncident;
-    setValues(v);
+    setValues(presetValues(f, f.presets[0]));
   }
 
   function applyPreset(p: Preset) {
-    const v = p.values();
-    if (form.id === "transition" && v.incident_id === "" && lastIncident) v.incident_id = lastIncident;
-    setValues(v);
+    setValues(presetValues(form, p));
+  }
+
+  function setField(name: string, value: string) {
+    setValues(normalize(form.fields, { ...values, [name]: value }));
   }
 
   async function send() {
     setSending(true);
     const payload = form.body(values);
     const path = form.path(values);
-    const result = await postJson(path, payload, token);
-    if (form.id === "incident" && result.ok) setLastIncident(values.incident_id);
-    setSent((s) => [{ id: Date.now(), form: form.title, path, payload, result, at: new Date().toLocaleTimeString() }, ...s].slice(0, 20));
+    const method = form.method?.(values) ?? "POST";
+    const result = await sendJson(method, path, payload, token);
+    const loaded = result.ok && (result.body as Record<string, unknown> | null)?.loaded === 1;
+    if (form.id === "incident" && result.ok) setCtx((c) => ({ ...c, lastIncident: values.incident_id }));
+    if (form.id === "place" && loaded) setCtx((c) => ({ ...c, lastPlace: values.place_id }));
+    if (form.id === "attraction" && loaded) setCtx((c) => ({ ...c, lastAttraction: values.attraction_id }));
+    setSent((s) => [{ id: Date.now(), form: form.title, path: `${method} ${path}`, payload, result,
+      at: new Date().toLocaleTimeString() }, ...s].slice(0, 20));
     setSending(false);
     refresh();
   }
 
   const payload = form.body(values);
+  const method = form.method?.(values) ?? "POST";
+  const missingId = form.id === "edit" && !(values.record_id ?? "").trim();
 
   return (
     <div className="page">
@@ -353,7 +462,8 @@ export default function IngestView() {
           <p className="summary">
             Every record goes through the same pipeline as the batch scripts: request schema check, SHA-256
             deduplication, coordinate and field validation, quarantine with a reason code, then an append-only audit
-            entry. Send a preset twice to see <b>DUPLICATE</b>.
+            entry. Send a preset twice to see <b>DUPLICATE</b>. The last tab, <b>Edit / retire</b>, corrects or
+            retires existing records, again with an audit entry for every change.
           </p>
         </div>
         <label className="token">
@@ -386,25 +496,28 @@ export default function IngestView() {
               <label key={f.name}>
                 <span>{f.label}{f.optional && <small> (optional)</small>}</span>
                 {f.kind === "select" ? (
-                  <select value={values[f.name] ?? ""} onChange={(e) => setValues({ ...values, [f.name]: e.target.value })}>
-                    {f.options!.map((o) => <option key={o}>{o}</option>)}
+                  <select value={values[f.name] ?? ""} onChange={(e) => setField(f.name, e.target.value)}>
+                    {optionsOf(f, values).map((o) => <option key={o}>{o}</option>)}
                   </select>
                 ) : (
                   <input
                     className={f.kind === "datetime" ? "wide" : ""}
                     value={values[f.name] ?? ""}
                     inputMode={f.kind === "number" ? "decimal" : "text"}
-                    onChange={(e) => setValues({ ...values, [f.name]: e.target.value })}
+                    onChange={(e) => setField(f.name, e.target.value)}
                   />
                 )}
               </label>
             ))}
-            <button className="run" type="submit" disabled={sending}>{sending ? "Sending…" : "Send"}</button>
+            <button className="run" type="submit" disabled={sending || missingId}>
+              {sending ? "Sending…" : missingId ? "Enter an ID first (or add a place on the first tab)"
+                : method === "POST" ? "Send" : method === "PATCH" ? "Save change" : "Delete"}
+            </button>
           </form>
 
           <details>
-            <summary>Request body</summary>
-            <pre>{`POST ${form.path(values)}\n${JSON.stringify(payload, null, 2)}`}</pre>
+            <summary>Request</summary>
+            <pre>{`${method} ${form.path(values)}` + (payload === undefined ? "" : `\n${JSON.stringify(payload, null, 2)}`)}</pre>
           </details>
         </section>
 

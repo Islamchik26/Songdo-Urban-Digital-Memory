@@ -2,7 +2,7 @@ task,url,ui_rows,api_rows,ui_error,status,screenshot
 CORE-1,#/tasks?task=CORE-1&run=1,5,5,,PASS,screenshots/task_CORE-1.png
 CORE-2,#/tasks?task=CORE-2&run=1,15,15,,PASS,screenshots/task_CORE-2.png
 CORE-3,#/tasks?task=CORE-3&run=1,2,2,,PASS,screenshots/task_CORE-3.png
-CORE-4,#/tasks?task=CORE-4&run=1,40,40,,PASS,screenshots/task_CORE-4.png
+CORE-4,#/tasks?task=CORE-4&run=1,45,45,,PASS,screenshots/task_CORE-4.png
 DB1-1,#/tasks?task=DB1-1&run=1,11,11,,PASS,screenshots/task_DB1-1.png
 DB1-2,#/tasks?task=DB1-2&run=1,11,11,,PASS,screenshots/task_DB1-2.png
 DB1-3,#/tasks?task=DB1-3&run=1,16,16,,PASS,screenshots/task_DB1-3.png

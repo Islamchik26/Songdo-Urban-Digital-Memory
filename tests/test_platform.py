@@ -24,6 +24,7 @@ from adapters.environment_adapter import (  # noqa: E402
 from adapters.mobility_adapter import StopsAdapter, VehicleObservationAdapter  # noqa: E402
 from adapters.safety_adapter import IncidentsAdapter, IncidentTransitionsAdapter  # noqa: E402
 from adapters.tourism_adapter import AttractionsAdapter, VisitSamplesAdapter  # noqa: E402
+from api import edits  # noqa: E402
 from api.config import settings  # noqa: E402
 from api.main import app  # noqa: E402
 from api.scenarios import SCENARIOS  # noqa: E402
@@ -309,6 +310,24 @@ class ApiValidationTests(unittest.TestCase):
                                   params={"as_of": t, "lon": 126.6328, "lat": 37.3751}).json()
         self.assertEqual(outside["point"]["blocked_by"], [])
         self.assertEqual(self.client.get("/api/v1/safety/hazard-zones", params={"lon": 126.64}).status_code, 422)
+
+    @needs_db
+    def test_edit_endpoints_validate_input(self):
+        headers = {"X-API-Token": settings.ingest_api_token}
+        place = "/api/v1/core/places/PLC_INU"
+        self.assertEqual(self.client.patch(place, json={"name_en": "x"}).status_code, 401)
+        self.assertEqual(self.client.delete(place).status_code, 401)
+        for path, bad in ((place, {"population": 5}),                       # not an editable field
+                          (place, {"lat": 126.6}),                          # out of range
+                          (place, {}),                                       # nothing to change
+                          (place, {"name_ko": None}),                        # required field cleared
+                          ("/api/v1/building/devices/DEV-CV-PWR-01", {"current_status": "RETIRED"}),   # use DELETE
+                          ("/api/v1/tourism/events/EVT_SKYLINE_PHOTO", {"event_type": "PARTY"})):
+            r = self.client.patch(path, json=bad, headers=headers)
+            self.assertEqual(r.status_code, 422, (path, bad, r.text))
+        self.assertEqual(self.client.patch("/api/v1/core/places/PLC_NOPE", json={"name_en": "x"},
+                                           headers=headers).status_code, 404)
+        self.assertEqual(self.client.delete("/api/v1/tourism/events/EVT_NOPE", headers=headers).status_code, 404)
 
     def test_safety_write_endpoints_validate_input(self):
         headers = {"X-API-Token": settings.ingest_api_token}
@@ -953,6 +972,135 @@ class CrossDomainDatabaseTests(unittest.TestCase):
         plan = "\n".join(r[0] for r in self.conn.execute(
             "EXPLAIN SELECT * FROM cross_domain.v_attractions_events_near_stops"))
         self.assertRegex(plan, r"idx_(stops|attractions)_geog")
+
+
+@needs_db
+class EditDatabaseTests(unittest.TestCase):
+    """PATCH / DELETE rules for reference data (api/edits.py), each change with an audit entry.
+
+    The tests create their own records inside the rolled-back transaction, so they do not depend on
+    (or break because of) edits someone made through the console on a shared database.
+    """
+
+    def setUp(self):
+        self.conn = psycopg.connect(settings.conninfo())
+        self.conn.execute("SELECT 1")      # edits run in a savepoint; everything is rolled back
+        self.conn.execute("""
+            INSERT INTO core.places (place_id, name_ko, name_en, category, road_address, geom, provenance) VALUES
+              ('PLC_T_FREE', '테스트 장소', 'Test place', 'LANDMARK', '테스트로 1',
+               ST_SetSRID(ST_MakePoint(126.6400, 37.3900), 4326), 'SRC_CORE_01'),
+              ('PLC_T_USED', '사용 중인 장소', NULL, 'CULTURE', NULL,
+               ST_SetSRID(ST_MakePoint(126.6410, 37.3910), 4326), 'SRC_CORE_01');
+            INSERT INTO tourism.attractions (attraction_id, attraction_name_ko, category, is_wheelchair_accessible,
+                                             has_parking, admission_fee_krw, place_id, geom, source_id)
+            VALUES ('ATT_T_EDIT', '테스트 전시관', 'CULTURE', TRUE, FALSE, 5000, 'PLC_T_USED',
+                    ST_SetSRID(ST_MakePoint(126.6410, 37.3910), 4326), 'SRC_TOU_SYN');
+            INSERT INTO tourism.events (event_id, attraction_id, event_name_ko, event_type, start_date, end_date,
+                                        daily_start_time, daily_end_time, expected_attendance, source_id)
+            VALUES ('EVT_T_EDIT', 'ATT_T_EDIT', '테스트 전시', 'EXHIBITION', '2026-12-01', '2026-12-03',
+                    '10:00', '18:00', 300, 'SRC_TOU_SYN');
+            INSERT INTO building.devices (device_id, device_type, manufacturer, model, serial_number, protocol,
+                                          installed_on, source_id)
+            VALUES ('DEV-T-EDIT', 'TEMP_SENSOR', 'TestCo', 'T-100', 'SN-T-EDIT-0001', 'MQTT', '2026-09-01', 'SRC_BLD_SYN');
+            INSERT INTO building.device_space_assignments (device_id, space_id, assigned_at)
+            VALUES ('DEV-T-EDIT', 'SP-GT-F03-R2', '2026-09-01 09:00+09');""")
+
+    def tearDown(self):
+        self.conn.rollback()
+        self.conn.close()
+
+    def one(self, query, *params):
+        return self.conn.execute(query, params).fetchone()
+
+    def audits(self, table, entity_id):
+        return self.conn.execute(
+            """SELECT action, payload_snapshot FROM core.event_audit_log
+               WHERE table_name = %s AND entity_id = %s ORDER BY audit_id""", (table, entity_id)).fetchall()
+
+    def status(self, fn, *args):
+        with self.assertRaises(edits.EditError) as ctx:
+            fn(self.conn, *args)
+        return ctx.exception.status
+
+    def test_place_update_writes_only_real_changes(self):
+        r = edits.update(self.conn, edits.PLACE, "PLC_T_FREE", {"name_en": "Renamed place"})
+        self.assertEqual((r["outcome"], r["changed"]["name_en"]), ("UPDATED", {"from": "Test place", "to": "Renamed place"}))
+        self.assertEqual(self.one("SELECT name_en FROM core.places WHERE place_id = 'PLC_T_FREE'")[0], "Renamed place")
+        (action, payload), = self.audits("places", "PLC_T_FREE")
+        self.assertEqual((action, payload["before"], payload["after"]),
+                         ("UPDATE", {"name_en": "Test place"}, {"name_en": "Renamed place"}))
+        # the same value again: nothing written, nothing audited
+        self.assertEqual(edits.update(self.conn, edits.PLACE, "PLC_T_FREE", {"name_en": "Renamed place"})["outcome"],
+                         "UNCHANGED")
+        self.assertEqual(len(self.audits("places", "PLC_T_FREE")), 1)
+        # moving the point: only lon is sent, lat is kept; outside Songdo is refused
+        edits.update(self.conn, edits.PLACE, "PLC_T_FREE", {"lon": 126.6301})
+        self.assertEqual(self.one("SELECT ST_X(geom), ST_Y(geom), is_in_songdo FROM core.places "
+                                  "WHERE place_id = 'PLC_T_FREE'"), (126.6301, 37.39, True))
+        self.assertEqual(self.status(edits.update, edits.PLACE, "PLC_T_FREE", {"lon": 126.978, "lat": 37.5665}), 422)
+        # optional fields can be cleared, required ones cannot
+        edits.update(self.conn, edits.PLACE, "PLC_T_FREE", {"road_address": None})
+        self.assertIsNone(self.one("SELECT road_address FROM core.places WHERE place_id = 'PLC_T_FREE'")[0])
+        self.assertEqual(self.status(edits.update, edits.PLACE, "PLC_T_FREE", {"name_ko": None}), 422)
+        self.assertEqual(self.status(edits.update, edits.PLACE, "PLC_T_FREE", {"population": 5}), 422)
+        self.assertEqual(self.status(edits.update, edits.PLACE, "PLC_NOPE", {"name_en": "x"}), 404)
+
+    def test_place_is_deleted_only_when_nothing_refers_to_it(self):
+        self.assertEqual(self.status(edits.delete, edits.PLACE, "PLC_T_USED"), 409)      # an attraction uses it
+        self.assertIsNotNone(self.one("SELECT 1 FROM core.places WHERE place_id = 'PLC_T_USED'"))
+        self.assertEqual(edits.delete(self.conn, edits.PLACE, "PLC_T_FREE")["outcome"], "DELETED")
+        self.assertIsNone(self.one("SELECT 1 FROM core.places WHERE place_id = 'PLC_T_FREE'"))
+        (action, payload), = self.audits("places", "PLC_T_FREE")
+        self.assertEqual(action, "DELETE")
+        self.assertEqual(payload["deleted_row"]["name_ko"], "테스트 장소")          # the row survives in the ledger
+
+    def test_attraction_rules_come_from_the_database(self):
+        # parking spaces without parking break ck_attractions_parking
+        self.assertEqual(self.status(edits.update, edits.ATTRACTION, "ATT_T_EDIT", {"parking_spaces": 10}), 409)
+        r = edits.update(self.conn, edits.ATTRACTION, "ATT_T_EDIT", {"has_parking": True, "parking_spaces": 10})
+        self.assertEqual((r["outcome"], sorted(r["changed"])), ("UPDATED", ["has_parking", "parking_spaces"]))
+        self.assertEqual(self.status(edits.delete, edits.ATTRACTION, "ATT_T_EDIT"), 409)    # its event refers to it
+
+    def test_cancelling_an_event_keeps_it(self):
+        self.assertEqual(edits.delete(self.conn, edits.EVENT, "EVT_T_EDIT")["outcome"], "CANCELLED")
+        self.assertTrue(self.one("SELECT is_cancelled FROM tourism.events WHERE event_id = 'EVT_T_EDIT'")[0])
+        self.assertEqual(edits.delete(self.conn, edits.EVENT, "EVT_T_EDIT")["outcome"], "ALREADY_CANCELLED")
+        self.assertEqual([a for a, _ in self.audits("events", "EVT_T_EDIT")], ["STATUS_CHANGE"])
+        # end before start breaks ck_events_dates; a valid date change is written
+        self.assertEqual(self.status(edits.update, edits.EVENT, "EVT_T_EDIT", {"end_date": "2026-01-01"}), 409)
+        edits.update(self.conn, edits.EVENT, "EVT_T_EDIT", {"end_date": "2026-12-05", "daily_end_time": "20:00:00"})
+        self.assertEqual(self.one("SELECT end_date::text, daily_end_time::text FROM tourism.events "
+                                  "WHERE event_id = 'EVT_T_EDIT'"), ("2026-12-05", "20:00:00"))
+
+    def test_retiring_a_device_closes_its_location_and_keeps_history(self):
+        self.assertEqual(edits.update(self.conn, edits.DEVICE, "DEV-T-EDIT", {"current_status": "MAINTENANCE"})["outcome"],
+                         "UPDATED")
+        r = edits.delete(self.conn, edits.DEVICE, "DEV-T-EDIT")
+        self.assertEqual((r["outcome"], r["closed_assignments"][0]["space_id"]), ("RETIRED", "SP-GT-F03-R2"))
+        status, still_open, in_october = self.one(
+            """SELECT d.current_status,
+                      count(*) FILTER (WHERE a.unassigned_at IS NULL),
+                      count(*) FILTER (WHERE tstzrange(a.assigned_at, a.unassigned_at) @> '2026-10-02 10:00+09'::timestamptz)
+               FROM building.devices d JOIN building.device_space_assignments a USING (device_id)
+               WHERE d.device_id = 'DEV-T-EDIT' GROUP BY 1""")
+        self.assertEqual((status, still_open, in_october), ("RETIRED", 0, 1))      # where it was in October is kept
+        self.assertEqual(self.status(edits.update, edits.DEVICE, "DEV-T-EDIT", {"model": "X"}), 409)
+        self.assertEqual(edits.delete(self.conn, edits.DEVICE, "DEV-T-EDIT")["outcome"], "ALREADY_RETIRED")
+        self.assertEqual([a for a, _ in self.audits("devices", "DEV-T-EDIT")], ["UPDATE", "STATUS_CHANGE"])
+
+    def test_a_failed_audit_rolls_the_change_back(self):
+        self.conn.execute("""CREATE OR REPLACE FUNCTION core.log_event(
+                                 p_domain_schema VARCHAR, p_table_name VARCHAR, p_entity_id VARCHAR, p_action VARCHAR,
+                                 p_observed_at TIMESTAMPTZ, p_received_at TIMESTAMPTZ, p_source_lineage VARCHAR,
+                                 p_payload JSONB, p_actor VARCHAR DEFAULT 'SYSTEM') RETURNS BIGINT
+                             LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'audit store unavailable'; END $$""")
+        with self.assertRaises(psycopg.Error):
+            edits.update(self.conn, edits.PLACE, "PLC_T_FREE", {"name_en": "should not stick"})
+        self.assertEqual(self.one("SELECT name_en FROM core.places WHERE place_id = 'PLC_T_FREE'")[0], "Test place")
+        with self.assertRaises(psycopg.Error):
+            edits.delete(self.conn, edits.DEVICE, "DEV-T-EDIT")
+        self.assertEqual(self.one("SELECT current_status FROM building.devices WHERE device_id = 'DEV-T-EDIT'")[0],
+                         "ACTIVE")
 
 
 class ConsumerTests(unittest.TestCase):

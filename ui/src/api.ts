@@ -164,11 +164,17 @@ export async function getJson<T>(path: string, params?: Record<string, string | 
 
 /** POST that never throws for HTTP errors: the ingestion page shows rejected requests too. */
 export async function postJson(path: string, body: unknown, token?: string): Promise<PostResult> {
+  return sendJson("POST", path, body, token);
+}
+
+/** POST / PATCH / DELETE with an optional JSON body. Never throws: network errors come back as status 0. */
+export async function sendJson(method: "POST" | "PATCH" | "DELETE", path: string, body: unknown,
+                               token?: string): Promise<PostResult> {
   const started = performance.now();
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (token) headers["X-API-Token"] = token;
   try {
-    const res = await fetch(path, { method: "POST", headers, body: body === undefined ? undefined : JSON.stringify(body) });
+    const res = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
     let parsed: unknown = null;
     try {
       parsed = await res.json();

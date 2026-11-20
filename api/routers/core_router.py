@@ -5,11 +5,13 @@ import secrets
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from adapters.core_adapter import PlacesAdapter
+from api import edits
 from api.config import settings
 from api.database import fetch_all, pool
+from api.edits import run_edit
 
 router = APIRouter(prefix="/api/v1/core", tags=["core"])
 
@@ -75,3 +77,27 @@ def ingest_places(places: Annotated[list[PlaceIn], Body(min_length=1, max_length
     with pool.connection() as conn:
         summary = PlacesAdapter(conn, actor="API").ingest([p.model_dump() for p in places])
     return summary.as_dict()
+
+
+# --------------------------------------------------------------------------- corrections
+class PlacePatch(BaseModel):
+    """Only the fields sent are changed. Send null to clear an optional field."""
+    model_config = ConfigDict(extra="forbid")
+    name_ko: str | None = Field(None, min_length=1, max_length=255)
+    name_en: str | None = Field(None, max_length=255)
+    category: str | None = Field(None, min_length=1, max_length=64)
+    road_address: str | None = Field(None, max_length=255)
+    lon: float | None = Field(None, ge=-180, le=180)
+    lat: float | None = Field(None, ge=-90, le=90)
+
+
+@router.patch("/places/{place_id}", dependencies=[Depends(require_token)],
+              summary="Correct a place: changed fields are written with an audit entry (old and new values)")
+def patch_place(place_id: str, body: PlacePatch) -> dict[str, Any]:
+    return run_edit(edits.update, edits.PLACE, place_id, body.model_dump(mode="json", exclude_unset=True))
+
+
+@router.delete("/places/{place_id}", dependencies=[Depends(require_token)],
+               summary="Delete a place; refused (409) while a building or attraction refers to it")
+def delete_place(place_id: str) -> dict[str, Any]:
+    return run_edit(edits.delete, edits.PLACE, place_id)

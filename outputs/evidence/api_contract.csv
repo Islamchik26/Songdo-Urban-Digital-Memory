@@ -17,9 +17,22 @@ report incident,POST /api/v1/safety/incidents,202 LOADED,202 LOADED,,PASS
 REPORTED -> RESOLVED (skips states),POST /api/v1/safety/incidents/INC-EVD-API-1/transition,409,409,,PASS
 REPORTED -> DISPATCHED,POST /api/v1/safety/incidents/INC-EVD-API-1/transition,200,200,2 history rows,PASS
 CLOSED incident -> DISPATCHED,POST /api/v1/safety/incidents/INC-20261002-0001/transition,409,409,,PASS
+add a place to edit,POST /api/v1/core/places,202,202,,PASS
+PATCH place without token,PATCH /api/v1/core/places/PLC_EVD_EDIT,401,401,,PASS
+PATCH place: rename,PATCH /api/v1/core/places/PLC_EVD_EDIT,200 UPDATED,200 UPDATED,1 UPDATE audit entry,PASS
+PATCH place: same value again,PATCH /api/v1/core/places/PLC_EVD_EDIT,200 UNCHANGED,200 UNCHANGED,still 1 audit entry,PASS
+PATCH place: move outside Songdo,PATCH /api/v1/core/places/PLC_EVD_EDIT,422,422,,PASS
+PATCH place: unknown field,PATCH /api/v1/core/places/PLC_EVD_EDIT,422,422,,PASS
+PATCH unknown place,PATCH /api/v1/core/places/PLC_NOPE,404,404,,PASS
+DELETE place still in use,DELETE /api/v1/core/places/PLC_CONVENSIA,409,409,1 row kept,PASS
+DELETE unreferenced place,DELETE /api/v1/core/places/PLC_EVD_EDIT,200 DELETED,200 DELETED,"0 rows left, 1 DELETE audit entry with the full row",PASS
+PATCH attraction: parking spaces without parking,PATCH /api/v1/tourism/attractions/ATT_HANOK_VILLAGE,409,409,,PASS
+"DELETE event (cancel, row kept)",DELETE /api/v1/tourism/events/EVT_SKYLINE_PHOTO,200 CANCELLED,200 CANCELLED,"1 row kept, is_cancelled",PASS
+DELETE device (retire),DELETE /api/v1/building/devices/DEV-CV-PWR-01,200 RETIRED,200 RETIRED,"0 open locations, 1 history rows kept",PASS
+PATCH retired device,PATCH /api/v1/building/devices/DEV-CV-PWR-01,409,409,,PASS
 unknown task,POST /api/v1/scenarios/DB9-9/run,404,404,,PASS
 task with bad parameter,POST /api/v1/scenarios/DB1-3/run,422,422,,PASS
 query out of range,GET /api/v1/core/places/nearby?radius_m=-5,422,422,,PASS
 stops GeoJSON,GET /api/v1/mobility/stops.geojson,200,200,"FeatureCollection, 513 Point features, all inside the bbox: True",PASS
-OpenAPI document,GET /openapi.json,200,200,49 paths documented,PASS
+OpenAPI document,GET /openapi.json,200,200,53 paths documented,PASS
 12 identical packets sent concurrently,POST /api/v1/mobility/observation x12 (barrier),1 stored row,"{""DUPLICATE"": 11, ""LOADED"": 1}",1 stored row(s),PASS
