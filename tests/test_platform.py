@@ -328,6 +328,15 @@ class ApiValidationTests(unittest.TestCase):
         self.assertEqual(self.client.patch("/api/v1/core/places/PLC_NOPE", json={"name_en": "x"},
                                            headers=headers).status_code, 404)
         self.assertEqual(self.client.delete("/api/v1/tourism/events/EVT_NOPE", headers=headers).status_code, 404)
+        # the Edit page's read routes: record lists and one record with its editable fields and history
+        events = self.client.get("/api/v1/system/records/event").json()
+        self.assertIn("EVT_SKYLINE_PHOTO", {r["id"] for r in events})
+        one = self.client.get("/api/v1/system/records/place/PLC_INU").json()
+        self.assertEqual(one["record"]["place_id"], "PLC_INU")
+        self.assertIn("lon", one["editable"])
+        self.assertIsInstance(one["audit"], list)
+        self.assertEqual(self.client.get("/api/v1/system/records/place/PLC_NOPE").status_code, 404)
+        self.assertEqual(self.client.get("/api/v1/system/records/cars").status_code, 422)
 
     def test_safety_write_endpoints_validate_input(self):
         headers = {"X-API-Token": settings.ingest_api_token}

@@ -253,12 +253,12 @@ the evidence run.
 Gate & Result & Evidence \\
 \midrule
 Database and PostGIS start successfully & \pass & PostgreSQL 18.3, PostGIS 3.7.0 (local); PostgreSQL 18.7, PostGIS 3.6.4 (hosted) \\
-All migration files run in dependency order & \pass & 9 files with \cmd{psql -v ON_ERROR_STOP=1}, all exit 0, 7.7 s \\
+All migration files run in dependency order & \pass & 9 files with \cmd{psql -v ON_ERROR_STOP=1}, all exit 0, 11.0 s \\
 Seed data load produces no FK/CHECK failures & \pass & 111,543 rows in 39 tables \\
 At least one invalid record is quarantined & \pass & Out-of-bounds, swapped coordinates, unknown vehicle, fault readings, invalid severity \\
 At least one spatial query uses a GiST index & \pass & 8 tasks use a GiST index in \cmd{EXPLAIN ANALYZE} \\
 FastAPI docs open and endpoints validate input & \pass & 37 of 37 contract cases (2xx, 401, 404, 409, 422) \\
-Automated tests pass without manual editing & \pass & 72 tests, OK, 5.2 s \\
+Automated tests pass without manual editing & \pass & 72 tests, OK, 6.9 s \\
 Backup and restore into a fresh database & \pass & \cmd{pg_dump -Fc} \ra{} \code{pg_restore}: 63 of 63 comparisons identical \\
 \bottomrule
 \end{tabularx}
@@ -1202,7 +1202,7 @@ POST & \code{/cross/refresh}: refresh materialized views & X \\
 PATCH & \code{/core/places/<id>}, \code{/tourism/attractions/<id>}, \code{/tourism/events/<id>}, \code{/building/devices/<id>}: correct fields & edits \\
 DELETE & same paths: delete if unreferenced (places, attractions), cancel (events), retire (devices) & edits \\
 GET/POST & \code{/scenarios}, \code{/scenarios/<id>/run}: list and run any task & all \\
-GET/POST & \code{/system/map/layers}, \code{/system/map/frame}, \code{/system/activity}, \code{/system/verification}, \code{/system/run-tests} & console \\
+GET/POST & \code{/system/map/layers}, \code{/system/map/frame}, \code{/system/activity}, \code{/system/verification}, \code{/system/run-tests}, \code{/system/records/<type>[/<id>]} & console \\
 \bottomrule
 \end{xltabular}
 \endgroup
@@ -1282,7 +1282,8 @@ Page & Function \\
 \midrule
 Tasks & All 36 tasks, searchable. Pick one, edit its parameters, run it: rows, the SQL that ran, the query plan, and a map when the result has coordinates. \\
 City map & Stops, routes, stations, attractions, buildings and facilities. A time slider rebuilds the city at any moment from history: vehicles, incidents in their status at that time, PM2.5 grade per station, active air alerts. Live mode refreshes every 2 s. \\
-Ingest & Eight forms, one per data-entry endpoint: a new place, a GPS fix, a building reading, a device relocation, a new attraction, an air reading, an incident report and a status change, each with valid and invalid presets. A ninth tab, \emph{Edit / retire}, corrects or deletes places, attractions, events and devices (Section~\ref{sec:edits}). Shows the outcome and the batch, quarantine and audit rows written. \\
+Ingest & Eight forms, one per data-entry endpoint: a new place, a GPS fix, a building reading, a device relocation, a new attraction, an air reading, an incident report and a status change, each with valid and invalid presets. Shows the outcome and the batch, quarantine and audit rows written. \\
+Edit & Pick a place, attraction, event or device from a list and load its current values. Change any fields (changed ones are highlighted with the old value) and save, or delete, cancel or retire it with the rule of Section~\ref{sec:edits}. Shows the record's own history from the audit log. \\
 Verify & 28 live platform checks (schemas, rows, views, freshness, ledger triggers, indexes, constraints) and a button that runs the test suite. \\
 \bottomrule
 \end{tabularx}
@@ -1297,6 +1298,8 @@ or \code{#/map?t=18:20}.
 
 \evidencefigure[0.85\linewidth]{page_ingest.png}{Ingest page: an invalid GPS fix is quarantined with its reason code.}{fig:ingest}
 
+\evidencefigure[0.85\linewidth]{page_edit.png}{Edit page: an event loaded with its current values, ready to correct or cancel.}{fig:edit}
+
 \evidencefigure[0.85\linewidth]{page_verify.png}{Verify page: live platform checks.}{fig:verify}
 
 % =============================================================================
@@ -1304,7 +1307,7 @@ or \code{#/map?t=18:20}.
 
 \subsection{Automated test suite}
 
-\cmd{python -m unittest tests/test_platform.py} runs 72 tests in about 5 seconds. Every
+\cmd{python -m unittest tests/test_platform.py} runs 72 tests in about 7 seconds. Every
 database test runs inside a transaction that is rolled back, so the suite leaves no trace
 and can run against any copy of the database.
 
@@ -1445,9 +1448,9 @@ with the indexes (median of 5 runs) and with index scans disabled (median of 3 r
 \toprule
 Query (1,000,000 rows) & With index (ms) & Without (ms) & Speed-up \\
 \midrule
-Radius search: fixes within 150 m of a point (GiST on \code{geography}) & 29.42 & 733.1 & 25$\times$ \\
-Point-in-time replay: last fix of 50 vehicles at $T$ (B-tree \cmd{(vehicle_id, observed_at)}) & 1.30 & 3,847.7 & 2,961$\times$ \\
-Time window: fixes in a 5-minute interval (B-tree \code{observed_at}) & 1.22 & 58.1 & 48$\times$ \\
+Radius search: fixes within 150 m of a point (GiST on \code{geography}) & 35.46 & 823.7 & 23$\times$ \\
+Point-in-time replay: last fix of 50 vehicles at $T$ (B-tree \cmd{(vehicle_id, observed_at)}) & 0.79 & 4,468.6 & 5,656$\times$ \\
+Time window: fixes in a 5-minute interval (B-tree \code{observed_at}) & 1.32 & 79.7 & 60$\times$ \\
 \bottomrule
 \end{tabularx}
 \end{center}
@@ -1459,11 +1462,11 @@ Time window: fixes in a 5-minute interval (B-tree \code{observed_at}) & 1.22 & 5
 \toprule
 Query & Planner (ms) & No index (ms) & Speed-up \\
 \midrule
-Stops within 1,000 m (513 stops, \code{idx_stops_geog}) & 0.42 & 1.22 & 2.9$\times$ \\
-GPS points within 150 m (20,238 rows, \code{idx_obs_geog}) & 4.61 & 36.20 & 7.9$\times$ \\
-Last position of each vehicle at $T$ & 0.99 & 46.77 & 47.2$\times$ \\
-Status history of one incident (49,421 rows) & 0.18 & 4.97 & 27.4$\times$ \\
-Audit history of one entity (small table: the index costs more than it saves) & 0.29 & 0.17 & 0.6$\times$ \\
+Stops within 1,000 m (513 stops, \code{idx_stops_geog}) & 0.65 & 1.42 & 2.2$\times$ \\
+GPS points within 150 m (20,238 rows, \code{idx_obs_geog}) & 4.97 & 40.67 & 8.2$\times$ \\
+Last position of each vehicle at $T$ & 0.56 & 39.98 & 71.8$\times$ \\
+Status history of one incident (49,421 rows) & 0.26 & 5.26 & 20.0$\times$ \\
+Audit history of one entity (small table: the index saves nothing) & 0.23 & 0.23 & 1.0$\times$ \\
 \bottomrule
 \end{tabularx}
 \end{center}
@@ -1488,11 +1491,11 @@ the plan prepared while indexes were enabled. The benchmark now connects with
 
 \subsection{Query latency}
 
-All 36 tasks have a median below 55 ms on the fixture data. The slowest is DB5-4B
-(DBSCAN over 10,000 incidents, 52 ms). In total, 34 tasks run in under 20 ms and 31 in
+All 36 tasks have a median below 60 ms on the fixture data. The slowest is DB5-4B
+(DBSCAN over 10,000 incidents, 59 ms). In total, 34 tasks run in under 20 ms and 30 in
 under 10 ms. Through the HTTP API, the 50th percentile of the measured endpoints is
-between 2 and 14 ms. The spatial lookups targeted by the handbook (CORE-1, DB1-5,
-nearby stops) take 0.4--3 ms, below the 20 ms target. These timings come from one laptop:
+between 3 and 22 ms. The spatial lookups targeted by the handbook (CORE-1, DB1-5,
+nearby stops) take 0.7--3.4 ms, below the 20 ms target. These timings come from one laptop:
 they show plan shape and relative cost, not production capacity.
 
 % =============================================================================
@@ -1504,7 +1507,7 @@ createdb -h localhost -p 5433 -U songdo_admin songdo_restore_test
 pg_restore -h localhost -p 5433 -U songdo_admin -d songdo_restore_test --exit-on-error outputs/songdo.backup
 \end{lstlisting}
 
-In the evidence run the dump took 0.7 s (2.5 MB) and the restore 2.8 s. All 63 comparisons
+In the evidence run the dump took 1.0 s (2.5 MB) and the restore 3.3 s. All 63 comparisons
 between the original and the restored database are identical:
 
 \begin{itemize}
@@ -1523,8 +1526,8 @@ are therefore schema-qualified (\code{public.ST_Covers}).
 \subsection{Clean clone in under 90 seconds}
 
 The final exit gate asks that a clean clone builds the database and passes the tests in
-under 90 seconds. The evidence run measured 7.7 s for all migrations and the seed, plus
-5.2 s for the 72 tests: about 13 s in total.
+under 90 seconds. The evidence run measured 11.0 s for all migrations and the seed, plus
+6.9 s for the 72 tests: about 18 s in total.
 
 \subsection{Determinism}
 

@@ -70,16 +70,56 @@ DEVICE = Entity("device", "building", "devices", "device_id",
                 (), "source_id")
 
 
+ENTITIES: dict[str, Entity] = {e.label: e for e in (PLACE, ATTRACTION, EVENT, DEVICE)}
+
+# id, a readable name and one detail per record, for the console's record picker
+_LISTS = {
+    "place": """SELECT place_id AS id, name_ko || COALESCE(' · ' || name_en, '') AS name, category AS detail
+                FROM core.places ORDER BY place_id""",
+    "attraction": """SELECT attraction_id AS id, attraction_name_ko || COALESCE(' · ' || attraction_name_en, '') AS name,
+                            category AS detail
+                     FROM tourism.attractions ORDER BY attraction_id""",
+    "event": """SELECT event_id AS id, event_name_ko AS name,
+                       start_date::text || CASE WHEN is_cancelled THEN ' · CANCELLED' ELSE '' END AS detail
+                FROM tourism.events ORDER BY event_id""",
+    "device": """SELECT d.device_id AS id, d.device_type || ' · ' || COALESCE(sp.building_id, 'not installed') AS name,
+                        d.current_status AS detail
+                 FROM building.devices d
+                 LEFT JOIN building.device_space_assignments a ON a.device_id = d.device_id AND a.unassigned_at IS NULL
+                 LEFT JOIN building.spaces sp ON sp.space_id = a.space_id
+                 ORDER BY d.device_id""",
+}
+
+
 def _table(e: Entity) -> sql.Composed:
     return sql.SQL("{}.{}").format(sql.Identifier(e.schema), sql.Identifier(e.table))
 
 
-def _lock(conn: psycopg.Connection, e: Entity, entity_id: str) -> dict[str, Any]:
+def listing(conn: psycopg.Connection, e: Entity) -> list[dict[str, Any]]:
+    rows = conn.execute(_LISTS[e.label]).fetchall()
+    return [{"id": _get(r, "id", 0), "name": _get(r, "name", 1), "detail": _get(r, "detail", 2)} for r in rows]
+
+
+def read(conn: psycopg.Connection, e: Entity, entity_id: str) -> dict[str, Any]:
+    """Current values of one record and its latest audit entries (what was changed, when, by whom)."""
+    record = _lock(conn, e, entity_id, lock=False)
+    audit = conn.execute(
+        """SELECT audit_id, action, actor, recorded_at, payload_snapshot
+           FROM core.event_audit_log WHERE table_name = %s AND entity_id = %s
+           ORDER BY audit_id DESC LIMIT 20""", (e.table, entity_id)).fetchall()
+    keys = ("audit_id", "action", "actor", "recorded_at", "payload_snapshot")
+    return {"entity": e.label, "entity_id": entity_id, "editable": list(e.editable), "nullable": list(e.nullable),
+            "record": record,
+            "audit": [{k: _get(r, k, i) for i, k in enumerate(keys)} for r in audit]}
+
+
+def _lock(conn: psycopg.Connection, e: Entity, entity_id: str, lock: bool = True) -> dict[str, Any]:
     """The current row as JSON-like values (dates and times as ISO text), locked for this transaction."""
     point = sql.SQL(", ST_X(t.geom) AS lon, ST_Y(t.geom) AS lat") if e.has_geom else sql.SQL("")
     row = conn.execute(
-        sql.SQL("SELECT to_jsonb(t) - 'geom' AS row{point} FROM {table} t WHERE {key} = %s FOR UPDATE OF t")
-        .format(point=point, table=_table(e), key=sql.Identifier(e.key)), (entity_id,)).fetchone()
+        sql.SQL("SELECT to_jsonb(t) - 'geom' AS row{point} FROM {table} t WHERE {key} = %s{lock}")
+        .format(point=point, table=_table(e), key=sql.Identifier(e.key),
+                lock=sql.SQL(" FOR UPDATE OF t") if lock else sql.SQL("")), (entity_id,)).fetchone()
     if row is None:
         raise EditError(404, f"unknown {e.label} {entity_id!r}")
     current = dict(_get(row, "row", 0))
@@ -212,11 +252,14 @@ def delete(conn: psycopg.Connection, e: Entity, entity_id: str, actor: str = "AP
                 "note": "the full row is kept in the audit ledger"}
 
 
-def run_edit(fn: Callable[..., dict[str, Any]], *args: Any) -> dict[str, Any]:
-    """Run an edit on a pooled connection (committed on success) and turn EditError into HTTP errors."""
+def run_edit(fn: Callable[..., Any], *args: Any, actor: str | None = "API") -> Any:
+    """Run an edit (or a read) on a pooled connection and turn EditError into HTTP errors.
+
+    Edits are committed when the connection is returned to the pool; reads pass actor=None.
+    """
     from api.database import pool   # imported here so tests can use this module without the pool
     try:
         with pool.connection() as conn:
-            return fn(conn, *args, actor="API")
+            return fn(conn, *args, actor=actor) if actor else fn(conn, *args)
     except EditError as exc:
         raise HTTPException(exc.status, exc.detail) from None

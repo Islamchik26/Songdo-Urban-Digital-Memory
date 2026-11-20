@@ -777,7 +777,8 @@ def step_browser(server: Server) -> None:
     with ThreadPoolExecutor(4) as pool:
         coverage = list(pool.map(visit, enumerate(ids)))
     pages = [("map_0810", "#/map?t=08:10"), ("map_1820", "#/map?t=18:20"), ("ingest", "#/ingest"),
-             ("verify", "#/verify"), ("task_result_map", "#/tasks?task=DB5-2&run=1&view=map")]
+             ("verify", "#/verify"), ("task_result_map", "#/tasks?task=DB5-2&run=1&view=map"),
+             ("edit", "#/edit?entity=event&id=EVT_TRIBOWL_CONCERT")]
     for name, frag in pages:
         chrome(f"page-{name}", f"{server.url}/{frag}", f"--screenshot={shots / f'page_{name}.png'}")
     shutil.rmtree(profile_root, ignore_errors=True)

@@ -1,16 +1,18 @@
-// Shell: header with database status and four pages. The URL hash keeps the page (#/map, #/ingest, ...).
+// Shell: header with database status and five pages. The URL hash keeps the page (#/map, #/ingest, ...).
 import { useEffect, useState } from "react";
 import { getHealth } from "./api";
 import type { Health } from "./api";
 import TasksView from "./TasksView";
 import MapView from "./MapView";
 import IngestView from "./IngestView";
+import EditView from "./EditView";
 import VerifyView from "./VerifyView";
 
 const PAGES = [
   { id: "tasks", label: "Tasks", hint: "Run any of the 36 scenario tasks" },
   { id: "map", label: "City map", hint: "Replay the city at any moment" },
   { id: "ingest", label: "Ingest", hint: "Send records through the write path" },
+  { id: "edit", label: "Edit", hint: "Correct or retire existing records" },
   { id: "verify", label: "Verify", hint: "Quality gates and tests" },
 ] as const;
 type PageId = (typeof PAGES)[number]["id"];
@@ -58,6 +60,7 @@ export default function App() {
         {page === "tasks" && <TasksView />}
         {page === "map" && <MapView />}
         {page === "ingest" && <IngestView />}
+        {page === "edit" && <EditView />}
         {page === "verify" && <VerifyView />}
       </div>
     </div>

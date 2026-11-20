@@ -99,17 +99,18 @@ npm run dev        # http://localhost:5173 (needs the API running on :8000)
 `npm run build` writes `ui/dist`; when that folder exists, FastAPI serves the console at
 `http://127.0.0.1:8000/` so the whole demo runs from one process.
 
-The console has four pages:
+The console has five pages:
 
 | Page | What it does |
 |---|---|
 | **Tasks** | All 36 tasks. Pick one, change its parameters, run it: rows, the SQL that ran, the query plan, and a map for results with coordinates. |
 | **City map** | Stops, routes, stations, attractions, buildings, safety facilities. A time slider rebuilds the city at any moment from history: vehicles, incidents in their status at that time, PM2.5 per station, air alerts. **Live** mode refreshes every 2 s. |
-| **Ingest** | Forms for a new place, GPS, building sensor, device relocation, a new attraction, air reading, incident report and status change, with good and bad presets. The **Edit / retire** tab corrects or deletes places, attractions, events and devices. Shows the outcome (loaded, quarantined, duplicate, rejected) and the batch, quarantine and audit rows written. |
+| **Ingest** | Forms for a new place, GPS, building sensor, device relocation, a new attraction, air reading, incident report and status change, with good and bad presets. Shows the outcome (loaded, quarantined, duplicate, rejected) and the batch, quarantine and audit rows written. |
+| **Edit** | Pick a place, attraction, event or device, load its current values, change any fields and save, or delete / cancel / retire it. Changed fields show their old value; the record's audit history is listed below. |
 | **Verify** | 28 live checks (schemas, rows per domain, views, materialized view freshness, ledger triggers, indexes, constraints, quarantine, provenance, backup) and a button that runs the test suite. |
 
 Links can open a page in a given state: `#/tasks?task=DB5-2&run=1&view=map`, `#/map?t=18:20`,
-`#/map?live=1`. The map background comes from OpenStreetMap and needs internet; the data layers
+`#/map?live=1`, `#/edit?entity=event&id=EVT_SKYLINE_PHOTO`. The map background comes from OpenStreetMap and needs internet; the data layers
 work without it. The write forms and the test button send the token typed in the X-API-Token box
 (default `songdo-dev-token`, the value in `.env.example`); change it there if your `.env` sets another.
 

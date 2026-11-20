@@ -34,5 +34,5 @@ unknown task,POST /api/v1/scenarios/DB9-9/run,404,404,,PASS
 task with bad parameter,POST /api/v1/scenarios/DB1-3/run,422,422,,PASS
 query out of range,GET /api/v1/core/places/nearby?radius_m=-5,422,422,,PASS
 stops GeoJSON,GET /api/v1/mobility/stops.geojson,200,200,"FeatureCollection, 513 Point features, all inside the bbox: True",PASS
-OpenAPI document,GET /openapi.json,200,200,53 paths documented,PASS
+OpenAPI document,GET /openapi.json,200,200,55 paths documented,PASS
 12 identical packets sent concurrently,POST /api/v1/mobility/observation x12 (barrier),1 stored row,"{""DUPLICATE"": 11, ""LOADED"": 1}",1 stored row(s),PASS

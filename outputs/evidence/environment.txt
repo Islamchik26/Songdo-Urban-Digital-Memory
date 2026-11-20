@@ -1,5 +1,5 @@
-generated_at: 2026-11-21T01:39:48+09:00
-git_commit: a1045d9 (with uncommitted changes)
+generated_at: 2026-11-21T03:00:27+09:00
+git_commit: 13e7fc7 (with uncommitted changes)
 os: Windows 11 (10.0.22616)
 python: 3.14.4
 postgresql_server: PostgreSQL 18.3 on x86_64-windows, compiled by msvc-19.44.35225, 64-bit

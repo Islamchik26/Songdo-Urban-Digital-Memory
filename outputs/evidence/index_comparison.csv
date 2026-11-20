@@ -1,6 +1,6 @@
 query,table,planner_choice,indexes,median_ms_planner_choice,median_ms_indexes_disabled,speedup
-"Stops within 1000 m (starter notebook, module 19)","mobility.stops, 513 rows",index,idx_stops_geog,0.419,1.215,2.9
-GPS points within 150 m of a point,mobility.vehicle_observations,index,idx_obs_geog,4.61,36.199,7.9
-Each vehicle's last position at T (point-in-time replay),mobility.vehicle_observations,index,idx_obs_time vehicles_pkey,0.992,46.771,47.2
-Audit history of one entity,core.event_audit_log,index,idx_audit_entity,0.286,0.168,0.6
-Status history of one incident,safety.incident_status_history,index,idx_history_incident_time,0.181,4.97,27.4
+"Stops within 1000 m (starter notebook, module 19)","mobility.stops, 513 rows",index,idx_stops_geog,0.654,1.419,2.2
+GPS points within 150 m of a point,mobility.vehicle_observations,index,idx_obs_geog,4.972,40.665,8.2
+Each vehicle's last position at T (point-in-time replay),mobility.vehicle_observations,index,uq_obs_vehicle_time vehicles_pkey,0.557,39.983,71.8
+Audit history of one entity,core.event_audit_log,index,idx_audit_entity,0.225,0.228,1.0
+Status history of one incident,safety.incident_status_history,index,idx_history_incident_time,0.263,5.258,20.0

@@ -7,6 +7,7 @@
   GET  /activity             latest ingestion batches, quarantined records and audit-ledger entries
   GET  /verification         PASS / WARN / FAIL checklist of the whole platform (handbook quality gates)
   POST /run-tests            runs the unittest suite in a separate process (token required)
+  GET  /records/{type}[/{id}] editable records and one record with its audit history (Edit page)
 """
 from __future__ import annotations
 
@@ -15,11 +16,13 @@ import sys
 import time
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from pydantic import AwareDatetime
 
+from api import edits
 from api.config import ROOT
 from api.database import fetch_all, fetch_one
+from api.edits import run_edit
 from api.routers.core_router import require_token
 from api.routers.safety_router import ACTIVE_AS_OF_SQL
 
@@ -282,3 +285,20 @@ def run_tests() -> dict[str, Any]:
     ran = next((line for line in reversed(lines) if line.startswith("Ran ")), "")
     return {"passed": proc.returncode == 0, "summary": f"{ran} - {lines[-1] if lines else ''}",
             "elapsed_s": round(time.perf_counter() - started, 1), "output_tail": lines[-40:]}
+
+
+# ---------------------------------------------------------------------------
+# Records for the Edit page (the changes themselves go to PATCH / DELETE on the domain routes)
+# ---------------------------------------------------------------------------
+RECORD_TYPES = "^(place|attraction|event|device)$"
+
+
+@router.get("/records/{entity}", summary="Editable records of one type (id, name, detail) for the Edit page")
+def records(entity: str = Path(pattern=RECORD_TYPES)) -> list[dict[str, Any]]:
+    return run_edit(edits.listing, edits.ENTITIES[entity], actor=None)
+
+
+@router.get("/records/{entity}/{entity_id}",
+            summary="One record's current values, which fields are editable, and its latest audit entries")
+def record(entity: str = Path(pattern=RECORD_TYPES), entity_id: str = Path(min_length=1)) -> dict[str, Any]:
+    return run_edit(edits.read, edits.ENTITIES[entity], entity_id, actor=None)
