@@ -28,6 +28,7 @@ from api import edits  # noqa: E402
 from api.config import settings  # noqa: E402
 from api.main import app  # noqa: E402
 from api.scenarios import SCENARIOS  # noqa: E402
+from api import visuals  # noqa: E402
 from consumers.api_client import parse_time  # noqa: E402
 from consumers.digital_twin_temporal_replay import city_state_as_of, replay, vehicle_state_as_of  # noqa: E402
 from consumers.smart_mobility_adapter import (  # noqa: E402
@@ -231,6 +232,52 @@ class ApiValidationTests(unittest.TestCase):
         r = self.client.get("/api/v1/tourism/events", params={"from_date": "2026-10-05", "to_date": "2026-10-01"})
         self.assertEqual(r.status_code, 422)
         self.assertEqual(self.client.get("/api/v1/tourism/attractions/NOPE/visits").status_code, 404)
+
+    @needs_db
+    def test_task_charts_match_their_columns_and_tell_a_story(self):
+        """Every column a chart spec names exists in the task's real result, and the headline is produced."""
+        top_keys = ("label", "sub", "path", "detail", "kind", "start", "end", "current", "time", "state",
+                    "unit_column", "value", "duration", "actor")
+        nested_keys = ("column", "min", "max", "unit_column")
+
+        def columns(spec):
+            found = set()
+            for key, val in spec.items():
+                if key in top_keys and isinstance(val, str):
+                    found.add(val)
+                elif key in top_keys and isinstance(val, list):
+                    found.update(val)
+                elif key != "title" and isinstance(val, dict):
+                    found.update(v for k, v in val.items() if k in nested_keys and isinstance(v, str))
+                elif isinstance(val, list):
+                    for item in val:
+                        if isinstance(item, dict):
+                            found.update(v for k, v in item.items() if k in nested_keys and isinstance(v, str))
+            return found
+
+        for task_id, specs in visuals.VIZ.items():
+            r = self.client.post(f"/api/v1/scenarios/{task_id}/run", json={"params": {}})
+            self.assertEqual(r.status_code, 200, task_id)
+            body = r.json()
+            self.assertTrue(body["rows"], task_id)
+            self.assertEqual(body["viz"], specs)
+            present = set(body["rows"][0])
+            for spec in specs:
+                self.assertLessEqual(columns(spec), present, (task_id, spec["title"]))
+            if task_id in visuals.STORY:
+                self.assertTrue(body["story"]["headline"], task_id)
+                self.assertTrue(body["story"]["stats"], task_id)
+        # a task without charts still runs and simply has none
+        plain = self.client.post("/api/v1/scenarios/CORE-2/run", json={"params": {}}).json()
+        self.assertIsNone(plain["viz"])
+        self.assertIsNone(plain["story"])
+
+    def test_a_broken_headline_never_breaks_the_task(self):
+        with self.assertLogs("api.visuals", level="ERROR"):                      # logged, not raised
+            out = visuals.describe("DB1-2", [{"unexpected": 1}], {"trip_id": "X"})   # story raises KeyError inside
+        self.assertIsNone(out["story"])
+        self.assertTrue(out["viz"])
+        self.assertEqual(visuals.describe("DB1-2", [], {})["story"], None)        # no rows, no headline
 
     @needs_db
     def test_scenario_bad_date_range_is_422_not_500(self):

@@ -54,7 +54,7 @@ rows.tourism.sample_visits,6696,6696,True
 task.DB1-3 result sha256,c2b24a5e34171fc8,c2b24a5e34171fc8,True
 task.DB2-5 result sha256,23c5bdfa4e101cb0,23c5bdfa4e101cb0,True
 task.DB3-4 result sha256,4d3b0913d1f710cd,4d3b0913d1f710cd,True
-task.DB4-4 result sha256,14d1f9e991b92e26,14d1f9e991b92e26,True
+task.DB4-4 result sha256,58eca307c5b7df6a,58eca307c5b7df6a,True
 task.DB5-4 result sha256,46366091cc772920,46366091cc772920,True
 task.DB5-5 result sha256,66dab4917739d1d9,66dab4917739d1d9,True
 task.X-1 result sha256,a05e011fdc997d43,a05e011fdc997d43,True

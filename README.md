@@ -103,7 +103,7 @@ The console has five pages:
 
 | Page | What it does |
 |---|---|
-| **Tasks** | All 36 tasks. Pick one, change its parameters, run it: rows, the SQL that ran, the query plan, and a map for results with coordinates. |
+| **Tasks** | All 36 tasks. Pick one, change its parameters, run it: a plain-language headline with key numbers, a chart made for that task (`api/visuals.py`), a map for results with coordinates, the rows, the SQL that ran and the query plan. |
 | **City map** | Stops, routes, stations, attractions, buildings, safety facilities. A time slider rebuilds the city at any moment from history: vehicles, incidents in their status at that time, PM2.5 per station, air alerts. **Live** mode refreshes every 2 s. |
 | **Ingest** | Forms for a new place, GPS, building sensor, device relocation, a new attraction, air reading, incident report and status change, with good and bad presets. Shows the outcome (loaded, quarantined, duplicate, rejected) and the batch, quarantine and audit rows written. |
 | **Edit** | Pick a place, attraction, event or device, load its current values, change any fields and save, or delete / cancel / retire it. Changed fields show their old value; the record's audit history is listed below. |
@@ -183,6 +183,10 @@ results to `outputs/evidence/` (start with its `README.md`):
 
 Your working database is never touched; the two evidence databases are dropped at the end
 (`--keep` keeps them). The backup file goes to `outputs/` and is not committed.
+
+Timings change on every run. `python scripts/sync_handbook.py` copies the new numbers (build and test
+times, test count, API cases, backup/restore, benchmarks, latency) into `main.tex`, so the handbook always
+matches the committed evidence.
 
 ## ER diagrams
 

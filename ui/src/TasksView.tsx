@@ -1,8 +1,10 @@
-// Scenario console: pick any of the registered tasks, fill its parameters, run it, see rows, map, SQL and plan.
+// Scenario console: pick any of the registered tasks, fill its parameters, run it, see a headline,
+// charts (api/visuals.py), a map when rows have coordinates, the rows, the SQL and the plan.
 import { useEffect, useMemo, useRef, useState } from "react";
 import L from "leaflet";
 import LeafletMap, { popup } from "./LeafletMap";
 import { getRegistry, runScenario } from "./api";
+import { Charts, StoryPanel } from "./charts";
 import type { Param, Registry, Row, RunResult, Scenario } from "./api";
 
 function cell(value: unknown): string {
@@ -25,6 +27,15 @@ function coordinateKeys(rows: Row[]): [string, string] | null {
   const lon = LON_KEYS.find((k) => keys.includes(k));
   const lat = LAT_KEYS.find((k) => keys.includes(k));
   return lon && lat ? [lon, lat] : null;
+}
+
+type View = "chart" | "map" | "table";
+
+/** The view a fresh result opens in: the chart when the task has one, else the map, else the table. */
+function firstView(r: RunResult, wanted: View | null): View {
+  const has = { chart: Boolean(r.viz?.length) && r.rows.length > 0, map: coordinateKeys(r.rows) !== null, table: true };
+  if (wanted && has[wanted]) return wanted;
+  return has.chart ? "chart" : has.map ? "map" : "table";
 }
 
 function placeholder(p: Param): string {
@@ -74,7 +85,7 @@ export default function TasksView() {
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<RunResult | null>(null);
   const [runError, setRunError] = useState("");
-  const [view, setView] = useState<"table" | "map">("table");
+  const [view, setView] = useState<View>("table");
 
   useEffect(() => {
     getRegistry()
@@ -86,7 +97,7 @@ export default function TasksView() {
         // deep link: #/tasks?task=X-4&run=1&view=map opens the task already run
         const query = new URLSearchParams(location.hash.split("?")[1]);
         select(first);
-        if (wanted && query.get("run") === "1") run(first, defaults(first), query.get("view") === "map");
+        if (wanted && query.get("run") === "1") run(first, defaults(first), (query.get("view") as View | null) ?? null);
       })
       .catch((e: Error) => setLoadError(e.message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -106,14 +117,14 @@ export default function TasksView() {
     history.replaceState(null, "", `#/tasks?task=${s.id}`);
   }
 
-  async function run(task = selected, params = values, showMap = false) {
+  async function run(task = selected, params = values, wanted: View | null = null) {
     if (!task) return;
     setRunning(true);
     setRunError("");
     try {
       const r = await runScenario(task.id, params, explain);
       setResult(r);
-      setView(showMap && coordinateKeys(r.rows) ? "map" : coordinateKeys(r.rows) ? view : "table");
+      setView(firstView(r, wanted));
     } catch (e) {
       setResult(null);
       setRunError((e as Error).message);
@@ -128,6 +139,7 @@ export default function TasksView() {
   const readyCount = registry?.scenarios.filter((s) => s.status === "ready").length ?? 0;
   const columns = result && result.rows.length > 0 ? Object.keys(result.rows[0]) : [];
   const geo = result ? coordinateKeys(result.rows) : null;
+  const hasChart = Boolean(result?.viz?.length);
 
   return (
     <div className="layout">
@@ -217,16 +229,21 @@ export default function TasksView() {
                     {result.row_count} row{result.row_count === 1 ? "" : "s"}
                     {result.truncated && " (truncated)"} · {result.elapsed_ms} ms
                   </p>
-                  {geo && (
+                  {(hasChart || geo) && (
                     <div className="seg small-seg">
+                      {hasChart && <button className={view === "chart" ? "on" : ""} onClick={() => setView("chart")}>Chart</button>}
+                      {geo && <button className={view === "map" ? "on" : ""} onClick={() => setView("map")}>Map</button>}
                       <button className={view === "table" ? "on" : ""} onClick={() => setView("table")}>Table</button>
-                      <button className={view === "map" ? "on" : ""} onClick={() => setView("map")}>Map</button>
                     </div>
                   )}
                 </div>
 
+                {result.story && result.rows.length > 0 && <StoryPanel story={result.story} />}
+
                 {result.rows.length === 0 ? (
                   <p className="muted">The query ran and returned no rows.</p>
+                ) : view === "chart" && hasChart ? (
+                  <Charts specs={result.viz!} rows={result.rows} params={result.params} />
                 ) : view === "map" && geo ? (
                   <ResultMap rows={result.rows} keys={geo} />
                 ) : (

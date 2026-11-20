@@ -35,6 +35,50 @@ export interface RunResult {
   elapsed_ms: number;
   rows: Row[];
   explain: string[] | null;
+  viz?: ChartSpec[] | null;     // how to draw the rows (api/visuals.py)
+  story?: Story | null;         // plain-language headline and key numbers computed from the rows
+}
+
+export interface Story { headline: string; stats: { label: string; value: string }[] }
+
+export interface Measure { column: string; label: string; unit?: string; unit_column?: string; divide?: number; max?: number }
+interface StatusSpec { column: string; map: Record<string, string>; labels?: Record<string, string> }
+/** One chart, as declared in api/visuals.py. Which keys apply depends on `type`. */
+export interface ChartSpec {
+  type: "line" | "columns" | "bars" | "paired_bars" | "timeline" | "stepper" | "tree" | "meters" | string;
+  title: string;
+  x?: { column: string; label: string; format?: "time" };
+  y?: Measure;
+  value?: Measure | string;
+  band?: { min: string; max: string; label?: string };
+  thresholds?: { column: string; label: string; role?: string }[];
+  markers?: { column: string; map: Record<string, string>; label: string };
+  zero_line?: boolean;
+  label?: string | string[];
+  sub?: string;
+  sub_prefix?: string;
+  limit?: number;
+  null_label?: string;
+  reference?: { column?: string; param?: string; value?: number; label: string };
+  marker?: { column: string; label: string };
+  status?: StatusSpec;
+  unit?: string;
+  unit_column?: string;
+  a?: { column: string; label: string };
+  b?: { column: string; label: string };
+  start?: string;
+  end?: string;
+  open_end_param?: string;
+  current?: string;
+  duration?: { column: string; unit: string } | string;
+  time?: string;
+  state?: string;               // stepper: the column holding each step's state
+  detail?: string;
+  actor?: string;
+  path?: string;
+  count?: { column: string; label: string };
+  kind?: string;
+  age?: { column: string; unit: string };
 }
 
 export interface Health {

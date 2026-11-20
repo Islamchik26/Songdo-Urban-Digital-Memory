@@ -1,12 +1,12 @@
 Component,Verification,Status,Detail
 PostgreSQL,Connection and version,PASS,PostgreSQL 18.3 on x86_64-windows
 PostGIS,Extension,PASS,3.7.0
-Boot / DDL / seed,psql ON_ERROR_STOP on a new database,PASS,"9 files, exit 0, 11.0 s"
+Boot / DDL / seed,psql ON_ERROR_STOP on a new database,PASS,"9 files, exit 0, 12.8 s"
 Schema,Objects created,PASS,"39 tables, 4 views, 3 materialized views, 3 exclusion constraints, 5 triggers"
 Quarantine,"Bad input stored with a reason, API path included",PASS,"CORE-1, CORE-2, api_contract.csv"
 GiST,Spatial index used,PASS,8 tasks use a GiST index; see index_comparison.csv
 API,"Contract, idempotency, concurrency",PASS,37/37 cases
-Tests,unittest on the clean database,PASS,"72 tests, OK"
+Tests,unittest on the clean database,PASS,"74 tests, OK"
 Recovery,pg_restore and integrity comparison,PASS,63/63 identical
 Scenarios,Acceptance proofs,PASS,"29 pass, 3 limited, 0 fail"
 Web console,Every task run in a browser,PASS,36/36 tasks

@@ -620,7 +620,11 @@ _SCENARIOS: list[Scenario] = [
         """
         SELECT h.hour_start, h.avg_value::float8 AS avg_value, h.min_value::float8 AS min_value,
                h.max_value::float8 AS max_value, h.sample_count, t.unit,
-               a.severity AS alert_severity, a.status AS alert_status, a.resolved_at
+               a.severity AS alert_severity, a.status AS alert_status, a.resolved_at,
+               (SELECT r.threshold_value::float8 FROM environment.alert_rules r
+                WHERE r.type_code = h.type_code AND r.severity = 'BAD' AND r.is_active) AS bad_threshold,
+               (SELECT r.threshold_value::float8 FROM environment.alert_rules r
+                WHERE r.type_code = h.type_code AND r.severity = 'VERY_BAD' AND r.is_active) AS very_bad_threshold
         FROM environment.hourly_summaries h
         JOIN environment.stations s USING (station_id)
         JOIN environment.measurement_types t USING (type_code)
@@ -652,7 +656,8 @@ _SCENARIOS: list[Scenario] = [
                ROUND(EXTRACT(EPOCH FROM (%(as_of)s::timestamptz - l.observed_at)) / 60)::int AS age_minutes,
                CASE WHEN l.measured_value > vb.threshold_value THEN 'VERY_BAD'
                     WHEN l.measured_value > b.threshold_value  THEN 'BAD'
-                    ELSE 'NORMAL' END AS grade
+                    ELSE 'NORMAL' END AS grade,
+               b.threshold_value::float8 AS bad_threshold, vb.threshold_value::float8 AS very_bad_threshold
         FROM (
             SELECT s.station_id, s.station_name_ko,
                    ROUND(ST_Distance(s.geom::geography,

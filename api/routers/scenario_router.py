@@ -1,4 +1,4 @@
-"""/api/v1/scenarios — list every task and run one by id."""
+"""/api/v1/scenarios — list every task and run one by id (rows, SQL, plan, charts and a headline)."""
 from __future__ import annotations
 
 import time
@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from api.database import pool
 from api.scenarios import DOMAINS, SCENARIOS
+from api.visuals import describe
 
 router = APIRouter(prefix="/api/v1/scenarios", tags=["scenarios"])
 
@@ -71,4 +72,5 @@ def run_scenario(scenario_id: str, body: RunRequest) -> dict[str, Any]:
         "elapsed_ms": round(elapsed_ms, 2),
         "rows": rows,
         "explain": plan,
+        **describe(scenario.id, rows, bound),   # "viz": chart specs, "story": headline + key numbers
     }
